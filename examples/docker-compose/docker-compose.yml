@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # Otellix demo app — makes mock LLM calls and exposes Prometheus metrics
+  otellix-demo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "9090:9090"
+    environment:
+      - METRICS_PORT=9090
+    restart: unless-stopped
+
+  # Prometheus — scrapes metrics from the demo app
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - otellix-demo
+    restart: unless-stopped
+
+  # Grafana — pre-loaded with Otellix dashboard
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
+    volumes:
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - ./provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
