@@ -35,6 +35,9 @@ type Config struct {
 
 	// BudgetConfig holds budget enforcement settings. Nil means no budget enforcement.
 	BudgetConfig *BudgetConfig
+
+	// PromptDecorator is a function that can modify prompt params based on budget context.
+	PromptDecorator PromptDecorator
 }
 
 // Option is a functional option for configuring a traced LLM call.
@@ -91,6 +94,11 @@ func WithFallbackModel(model string) Option {
 // WithBudgetConfig sets budget enforcement configuration.
 func WithBudgetConfig(bc *BudgetConfig) Option {
 	return func(c *Config) { c.BudgetConfig = bc }
+}
+
+// WithPromptDecorator sets a function to dynamically decorate prompts based on budget.
+func WithPromptDecorator(pd PromptDecorator) Option {
+	return func(c *Config) { c.PromptDecorator = pd }
 }
 
 // NewConfig creates a Config from functional options.

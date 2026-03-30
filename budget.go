@@ -163,11 +163,10 @@ func NewBudgetEnforcer(config *BudgetConfig) *BudgetEnforcer {
 	if interval == 0 {
 		interval = 24 * time.Hour
 	}
-	store := config.Store
-	if store == nil {
-		store = NewInMemoryBudgetStore(interval)
+	if config.Store == nil {
+		config.Store = NewInMemoryBudgetStore(interval)
 	}
-	return &BudgetEnforcer{config: config, store: store}
+	return &BudgetEnforcer{config: config, store: config.Store}
 }
 
 // Check determines whether a call is allowed given current budget usage.
@@ -220,6 +219,35 @@ func (e *BudgetEnforcer) Remaining(userID, projectID string) float64 {
 		}
 	}
 	return remaining
+}
+
+// Status returns the current detailed budget status for a user/project.
+func (e *BudgetEnforcer) Status(ctx context.Context, userID, projectID string) BudgetStatus {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var usage, limit float64
+	var exceeded bool
+
+	if userID != "" && e.config.PerUserDailyLimit > 0 {
+		usage = e.store.GetSpend(ctx, "user:"+userID)
+		limit = e.config.PerUserDailyLimit
+	} else if projectID != "" && e.config.PerProjectDailyLimit > 0 {
+		usage = e.store.GetSpend(ctx, "project:"+projectID)
+		limit = e.config.PerProjectDailyLimit
+	}
+
+	if limit > 0 && usage >= limit {
+		exceeded = true
+	}
+
+	return BudgetStatus{
+		Usage:      usage,
+		Remaining:  limit - usage,
+		IsExceeded: exceeded,
+		Mode:       e.config.FallbackAction,
+	}
 }
 
 // BudgetError creates a BudgetExceededError with current state.

@@ -104,6 +104,15 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		}
 	}
 
+	// Dynamic Prompt Optimization: allow custom decorators to modify params based on budget status.
+	if cfg.PromptDecorator != nil {
+		status := BudgetStatus{Mode: FallbackNotify}
+		if enforcer != nil {
+			status = enforcer.Status(ctx, cfg.UserID, cfg.ProjectID)
+		}
+		cfg.PromptDecorator(ctx, status, &params)
+	}
+
 
 	spanName := cfg.SpanName
 	if spanName == "" {

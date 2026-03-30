@@ -71,6 +71,7 @@ Output:
 | **Prompt fingerprinting** | SHA256 fingerprint for prompt drift detection | All |
 | **Prometheus metrics** | Counters and histograms for all LLM telemetry | All |
 | **HTTP middleware** | Auto-extract user/project from JWT and headers | Gin, Echo |
+| **Prompt Decorators**| Dynamic prompt optimization based on real-time budget | All |
 | **Dev mode** | Human-readable stdout printer for local development | All |
 
 ## Configuration
@@ -120,6 +121,24 @@ if err != nil {
 | `FallbackBlock` | Return `BudgetExceededError` immediately — LLM is never called |
 | `FallbackNotify` | Call the LLM but emit a `budget.warning` event on the span |
 | `FallbackDowngrade` | Swap to a cheaper model (`Config.FallbackModel`) and proceed |
+
+## Dynamic Prompt Optimization
+
+Prompt Decorators allow your application to react to telemetry data in real-time. For example, you can inject the remaining budget directly into a system prompt to force the LLM to be more concise.
+
+```go
+decorator := func(ctx context.Context, status otellix.BudgetStatus, params *providers.CallParams) {
+    if status.Remaining < 0.05 {
+        params.SystemPrompt += "\n[BUDGET: You have less than $0.05 left. Be concise.]"
+        params.MaxTokens = 100 // Hard-cap output tokens to save cost
+    }
+}
+
+otellix.Trace(ctx, provider, params,
+    otellix.WithBudgetConfig(budgetCfg),
+    otellix.WithPromptDecorator(decorator),
+)
+```
 
 ## Metrics Emitted
 
