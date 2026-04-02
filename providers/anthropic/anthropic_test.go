@@ -80,4 +80,12 @@ func TestAnthropicStream(t *testing.T) {
 	if totalInput != 10 || totalOutput != 20 {
 		t.Errorf("Unexpected final tokens: in=%d, out=%d", totalInput, totalOutput)
 	}
+
+	joined := ""
+	for _, tok := range tokens {
+		joined += tok
+	}
+	if joined != "Hello world" {
+		t.Errorf("Unexpected response: %s", joined)
+	}
 }
