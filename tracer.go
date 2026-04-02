@@ -23,12 +23,12 @@ const (
 
 // Metrics instruments — initialised once via sync.Once.
 var (
-	meterOnce        sync.Once
-	inputTokensCount metric.Int64Counter
+	meterOnce         sync.Once
+	inputTokensCount  metric.Int64Counter
 	outputTokensCount metric.Int64Counter
-	costCounter      metric.Float64Counter
-	latencyHist      metric.Float64Histogram
-	errorsCount      metric.Int64Counter
+	costCounter       metric.Float64Counter
+	latencyHist       metric.Float64Histogram
+	errorsCount       metric.Int64Counter
 )
 
 // initMetrics creates OTel metric instruments. Safe to call multiple times.
@@ -83,7 +83,6 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		cfg.Model = params.Model
 	}
 
-
 	var enforcer *BudgetEnforcer
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)
@@ -99,7 +98,7 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 					cfg.Model = cfg.FallbackModel
 					params.Model = cfg.FallbackModel
 				}
-			// FallbackNotify: proceed, we'll add a warning event after the call.
+				// FallbackNotify: proceed, we'll add a warning event after the call.
 			}
 		}
 	}
@@ -113,7 +112,6 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		cfg.PromptDecorator(ctx, status, &params)
 	}
 
-
 	spanName := cfg.SpanName
 	if spanName == "" {
 		spanName = defaultSpanName
@@ -123,7 +121,6 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	ctx, span := tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 
-
 	span.SetAttributes(
 		attribute.String("llm.provider", cfg.Provider),
 		attribute.String("llm.model", cfg.Model),
@@ -132,17 +129,14 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		attribute.String("llm.project_id", cfg.ProjectID),
 	)
 
-
 	for k, v := range cfg.Attributes {
 		span.SetAttributes(attribute.String(k, v))
 	}
-
 
 	if cfg.EnablePromptFingerprint && cfg.PromptText != "" {
 		fingerprint := promptFingerprint(cfg.PromptText)
 		span.SetAttributes(attribute.String("llm.prompt_fingerprint", fingerprint))
 	}
-
 
 	start := time.Now()
 	result, err := provider.Call(ctx, params)
@@ -156,7 +150,6 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		attribute.String("user_id", cfg.UserID),
 		attribute.String("project_id", cfg.ProjectID),
 	)
-
 
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
@@ -180,7 +173,6 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		return result, err
 	}
 
-
 	span.SetStatus(codes.Ok, "")
 	span.SetAttributes(
 		attribute.Int64("llm.input_tokens", result.InputTokens),
@@ -192,12 +184,10 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	costUSD := CalculateCost(cfg.Provider, cfg.Model, result)
 	span.SetAttributes(attribute.Float64("llm.cost_usd", costUSD))
 
-
 	inputTokensCount.Add(ctx, result.InputTokens, metricAttrs)
 	outputTokensCount.Add(ctx, result.OutputTokens, metricAttrs)
 	costCounter.Add(ctx, costUSD, metricAttrs)
 	latencyHist.Record(ctx, latencyMs, metricAttrs)
-
 
 	if enforcer != nil {
 		enforcer.Record(ctx, cfg.UserID, cfg.ProjectID, costUSD)

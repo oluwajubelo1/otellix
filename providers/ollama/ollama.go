@@ -73,8 +73,8 @@ type ollamaResponse struct {
 	Model   string        `json:"model"`
 	Message ollamaMessage `json:"message"`
 
-	PromptEvalCount   int64 `json:"prompt_eval_count"`
-	EvalCount         int64 `json:"eval_count"`
+	PromptEvalCount int64 `json:"prompt_eval_count"`
+	EvalCount       int64 `json:"eval_count"`
 }
 
 // Call sends a chat request to the local Ollama server.
