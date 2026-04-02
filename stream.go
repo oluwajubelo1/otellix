@@ -28,7 +28,7 @@ type Stream struct {
 	outputTokens int64
 	costUSD      float64
 	start        time.Time
-	
+
 	closed bool
 }
 
@@ -133,7 +133,7 @@ func (s *Stream) Recv() (providers.StreamEvent, error) {
 		InputTokens:  s.inputTokens,
 		OutputTokens: s.outputTokens,
 	})
-	
+
 	s.costUSD = costUSD
 
 	if s.enforcer != nil {
@@ -183,7 +183,7 @@ func (s *Stream) Close() error {
 	if s.enforcer != nil {
 		s.enforcer.Record(s.ctx, s.cfg.UserID, s.cfg.ProjectID, s.costUSD)
 	}
-	
+
 	if devPrinter != nil {
 		res := providers.CallResult{
 			InputTokens:  s.inputTokens,
