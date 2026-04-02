@@ -13,7 +13,7 @@ import (
 func TestGeminiCall(t *testing.T) {
 	client := providertest.NewMockClient(providertest.NewJSONResponse(http.StatusOK, map[string]interface{}{
 		"usageMetadata": map[string]int{"promptTokenCount": 10, "candidatesTokenCount": 20},
-		"candidates": []map[string]interface{}{{"content": map[string]interface{}{"parts": []map[string]string{{"text": "Hello world"}}}}},
+		"candidates":    []map[string]interface{}{{"content": map[string]interface{}{"parts": []map[string]string{{"text": "Hello world"}}}}},
 	}), nil)
 
 	ctx := context.Background()
@@ -21,16 +21,16 @@ func TestGeminiCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	
+
 	result, err := p.Call(ctx, providers.CallParams{
-		Model: "gemini-2.0-flash",
+		Model:    "gemini-2.0-flash",
 		Messages: []providers.Message{{Role: "user", Content: "Hi"}},
 	})
-	
+
 	if err != nil {
 		t.Fatalf("Call failed: %v", err)
 	}
-	
+
 	if result.InputTokens != 10 || result.OutputTokens != 20 {
 		t.Errorf("Unexpected tokens: %+v", result)
 	}

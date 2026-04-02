@@ -16,26 +16,26 @@ import (
 func TestOllamaCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{
-			"model": "llama3",
-			"message": map[string]string{"role": "assistant", "content": "Hello"},
+			"model":             "llama3",
+			"message":           map[string]string{"role": "assistant", "content": "Hello"},
 			"prompt_eval_count": 10,
-			"eval_count": 20,
+			"eval_count":        20,
 		}
 		json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
 	p := ollama.New(ollama.WithBaseURL(server.URL))
-	
+
 	result, err := p.Call(context.Background(), providers.CallParams{
-		Model: "llama3",
+		Model:    "llama3",
 		Messages: []providers.Message{{Role: "user", Content: "Hi"}},
 	})
-	
+
 	if err != nil {
 		t.Fatalf("Call failed: %v", err)
 	}
-	
+
 	if result.InputTokens != 10 || result.OutputTokens != 20 {
 		t.Errorf("Unexpected tokens: %+v", result)
 	}
@@ -44,7 +44,7 @@ func TestOllamaCall(t *testing.T) {
 func TestOllamaStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
-		
+
 		// Chunk 1
 		fmt.Fprintln(w, `{"message": {"content": "Hello"}, "done": false}`)
 		// Chunk 2
@@ -55,9 +55,9 @@ func TestOllamaStream(t *testing.T) {
 	defer server.Close()
 
 	p := ollama.New(ollama.WithBaseURL(server.URL))
-	
+
 	stream, err := p.Stream(context.Background(), providers.CallParams{
-		Model: "llama3",
+		Model:    "llama3",
 		Messages: []providers.Message{{Role: "user", Content: "Hi"}},
 	})
 	if err != nil {
@@ -89,7 +89,7 @@ func TestOllamaStream(t *testing.T) {
 	if totalInput != 10 || totalOutput != 20 {
 		t.Errorf("Unexpected final tokens: in=%d, out=%d", totalInput, totalOutput)
 	}
-	
+
 	joined := ""
 	for _, tok := range tokens {
 		joined += tok

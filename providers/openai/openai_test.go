@@ -7,30 +7,30 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/openai/openai-go/option"
 	"github.com/oluwajubelo1/otellix/providers"
 	"github.com/oluwajubelo1/otellix/providers/openai"
 	"github.com/oluwajubelo1/otellix/providers/providertest"
+	"github.com/openai/openai-go/option"
 )
 
 func TestOpenAICall(t *testing.T) {
 	client := providertest.NewMockClient(providertest.NewJSONResponse(http.StatusOK, map[string]interface{}{
-		"usage": map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 20, "prompt_tokens_details": map[string]int{"cached_tokens": 0}},
-		"model": "gpt-4o",
+		"usage":   map[string]interface{}{"prompt_tokens": 10, "completion_tokens": 20, "prompt_tokens_details": map[string]int{"cached_tokens": 0}},
+		"model":   "gpt-4o",
 		"choices": []map[string]interface{}{{"message": map[string]string{"content": "Hello world"}}},
 	}), nil)
 
 	p := openai.New(option.WithHTTPClient(client), option.WithAPIKey("test-key"))
-	
+
 	result, err := p.Call(context.Background(), providers.CallParams{
-		Model: "gpt-4o",
+		Model:    "gpt-4o",
 		Messages: []providers.Message{{Role: "user", Content: "Hi"}},
 	})
-	
+
 	if err != nil {
 		t.Fatalf("Call failed: %v", err)
 	}
-	
+
 	if result.InputTokens != 10 || result.OutputTokens != 20 {
 		t.Errorf("Unexpected tokens: %+v", result)
 	}
@@ -46,9 +46,9 @@ func TestOpenAIStream(t *testing.T) {
 	client := providertest.NewMockClient(providertest.NewStreamResponse(http.StatusOK, bytes.NewReader([]byte(sseData))), nil)
 
 	p := openai.New(option.WithHTTPClient(client), option.WithAPIKey("test-key"))
-	
+
 	stream, err := p.Stream(context.Background(), providers.CallParams{
-		Model: "gpt-4o",
+		Model:    "gpt-4o",
 		Messages: []providers.Message{{Role: "user", Content: "Hi"}},
 	})
 	if err != nil {
@@ -80,7 +80,7 @@ func TestOpenAIStream(t *testing.T) {
 	if totalInput != 10 || totalOutput != 20 {
 		t.Errorf("Unexpected final tokens: in=%d, out=%d", totalInput, totalOutput)
 	}
-	
+
 	joined := ""
 	for _, tok := range tokens {
 		joined += tok
