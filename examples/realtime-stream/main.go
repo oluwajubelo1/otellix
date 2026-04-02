@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/oluwajubelo1/otellix"
 	"github.com/oluwajubelo1/otellix/providers"
 	"github.com/oluwajubelo1/otellix/providers/anthropic"
-	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
 func main() {
@@ -74,12 +74,12 @@ func main() {
 
 	var tokensSoFar int64
 	var costSoFar float64
-	
-	// We'll use a simple ANSI escape trick to print the token at the top 
+
+	// We'll use a simple ANSI escape trick to print the token at the top
 	// and keep a progress line at the very bottom.
 	// But to keep it robust across terminals, let's just print the token normally,
 	// and we won't print the cost every single token, instead we print it if it changes.
-	
+
 	for {
 		evt, err := stream.Recv()
 		if err != nil {
@@ -92,14 +92,14 @@ func main() {
 			}
 			break
 		}
-		
+
 		fmt.Print(evt.Token)
-		
+
 		tokensSoFar += evt.OutputTokens
 		if evt.Token != "" && evt.OutputTokens == 0 {
 			tokensSoFar++
 		}
-		
+
 		if tokensSoFar%25 == 0 {
 			costSoFar = otellix.CalculateCost("anthropic", "claude-sonnet-4-6", providers.CallResult{OutputTokens: tokensSoFar})
 			// Print a quick ephemeral status using carriage return (only works if we're on a separate line)
@@ -107,7 +107,7 @@ func main() {
 			// fmt.Printf("\033]0;Otellix Live: %d tokens | $%.4f\007", tokensSoFar, costSoFar)
 		}
 	}
-	
+
 	// Print final cost manually since stream closed
 	fmt.Printf("\nFinal estimated cost inside loop: $%.6f\n", costSoFar)
 	fmt.Println("--- End ---")
@@ -167,4 +167,3 @@ func (s *simulatedProvider) Stream(ctx context.Context, params providers.CallPar
 
 	return &simulatedStream{tokens: tokens}, nil
 }
-
