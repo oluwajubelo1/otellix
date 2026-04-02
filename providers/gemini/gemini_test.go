@@ -107,6 +107,7 @@ func TestGeminiStream(t *testing.T) {
 }
 */
 
+/*
 type redirectTransport struct {
 	BaseURL string
 }
@@ -117,3 +118,4 @@ func (t *redirectTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	newReq.URL.Host = t.BaseURL[7:] // remove http://
 	return http.DefaultTransport.RoundTrip(newReq)
 }
+*/

@@ -21,7 +21,7 @@ func TestOllamaCall(t *testing.T) {
 			"prompt_eval_count": 10,
 			"eval_count":        20,
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
