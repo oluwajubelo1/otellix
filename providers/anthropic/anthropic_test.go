@@ -21,16 +21,16 @@ func TestAnthropicCall(t *testing.T) {
 	}), nil)
 
 	p := anthropic.New(option.WithHTTPClient(client), option.WithAPIKey("test-key"))
-	
+
 	result, err := p.Call(context.Background(), providers.CallParams{
-		Model: "claude-3-5-sonnet",
+		Model:    "claude-3-5-sonnet",
 		Messages: []providers.Message{{Role: "user", Content: "Hi"}},
 	})
-	
+
 	if err != nil {
 		t.Fatalf("Call failed: %v", err)
 	}
-	
+
 	if result.InputTokens != 10 || result.OutputTokens != 20 {
 		t.Errorf("Unexpected tokens: %+v", result)
 	}
@@ -46,9 +46,9 @@ func TestAnthropicStream(t *testing.T) {
 	client := providertest.NewMockClient(providertest.NewStreamResponse(http.StatusOK, bytes.NewReader([]byte(sseData))), nil)
 
 	p := anthropic.New(option.WithHTTPClient(client), option.WithAPIKey("test-key"))
-	
+
 	stream, err := p.Stream(context.Background(), providers.CallParams{
-		Model: "claude-3-5-sonnet",
+		Model:    "claude-3-5-sonnet",
 		Messages: []providers.Message{{Role: "user", Content: "Hi"}},
 	})
 	if err != nil {
