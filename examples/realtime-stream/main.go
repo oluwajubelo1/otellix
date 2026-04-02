@@ -12,25 +12,54 @@ import (
 	"github.com/oluwajubelo1/otellix"
 	"github.com/oluwajubelo1/otellix/providers"
 	"github.com/oluwajubelo1/otellix/providers/anthropic"
+	"github.com/oluwajubelo1/otellix/providers/gemini"
+	"github.com/oluwajubelo1/otellix/providers/ollama"
+	"github.com/oluwajubelo1/otellix/providers/openai"
 )
 
 func main() {
 	var provider providers.Provider
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		fmt.Println("Warning: ANTHROPIC_API_KEY not found. Using simulated real-time stream...")
-		provider = &simulatedProvider{}
+	var model string
+	var providerName string
+
+	ctx := context.Background()
+
+	// Detect which provider to use based on env vars
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		provider = anthropic.New(option.WithAPIKey(key))
+		model = "claude-3-5-sonnet-20240620"
+		providerName = "anthropic"
+	} else if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+		provider = openai.New() // Reads from OPENAI_API_KEY by default
+		model = "gpt-4o"
+		providerName = "openai"
+	} else if key := os.Getenv("GEMINI_API_KEY"); key != "" {
+		var err error
+		provider, err = gemini.New(ctx, key)
+		if err != nil {
+			fmt.Printf("Error initializing Gemini: %v\n", err)
+			return
+		}
+		model = "gemini-1.5-flash"
+		providerName = "gemini"
+	} else if os.Getenv("USE_OLLAMA") == "true" {
+		provider = ollama.New()
+		model = "llama3.2"
+		providerName = "ollama"
 	} else {
-		provider = anthropic.New(option.WithAPIKey(apiKey))
+		fmt.Println("Warning: No API keys found (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY).")
+		fmt.Println("Using simulated real-time stream for demonstration purposes...")
+		provider = &simulatedProvider{}
+		model = "claude-3-5-sonnet-20240620"
+		providerName = "anthropic"
 	}
 
-	// Setup stdout dev exporter so we see everything at the end
+	// Setup stdout dev exporter to see OpenTelemetry spans at the end
 	otellix.SetupDev()
 
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Println("=== Otellix Real-time Streaming ===")
-	fmt.Println("Type a prompt and press Enter. The cost and tokens will update live.")
-	fmt.Println("Try asking for a very long response to watch the budget increase!")
+	fmt.Printf("\n=== Otellix Real-time Streaming [%s] ===\n", providerName)
+	fmt.Println("Type a prompt and watch tokens stream live.")
 	fmt.Print("\nPrompt > ")
 
 	text, _ := reader.ReadString('\n')
@@ -39,28 +68,25 @@ func main() {
 		return
 	}
 
-	// For demonstration, let's set a tiny budget to see it actively cut off mid-stream
-	// if the model talks too much!
+	// Setup a tiny budget to demonstrate active mid-stream cutoff
 	budgetCfg := &otellix.BudgetConfig{
 		Store:                otellix.NewInMemoryBudgetStore(24 * time.Hour),
-		PerProjectDailyLimit: 0.0005, // super tiny limit so it cuts off our 60-word story
+		PerProjectDailyLimit: 0.001, // $0.001 limit
 		FallbackAction:       otellix.FallbackBlock,
 	}
-
-	ctx := context.Background()
 
 	// Call TraceStream
 	stream, err := otellix.TraceStream(
 		ctx,
 		provider,
 		providers.CallParams{
-			Model: "claude-sonnet-4-6",
+			Model: model,
 			Messages: []providers.Message{
 				{Role: "user", Content: text},
 			},
-			MaxTokens: 2000,
+			MaxTokens: 500,
 		},
-		otellix.WithProjectID("demo-proj"),
+		otellix.WithProjectID("streaming-demo"),
 		otellix.WithBudgetConfig(budgetCfg),
 	)
 
@@ -75,17 +101,12 @@ func main() {
 	var tokensSoFar int64
 	var costSoFar float64
 
-	// We'll use a simple ANSI escape trick to print the token at the top
-	// and keep a progress line at the very bottom.
-	// But to keep it robust across terminals, let's just print the token normally,
-	// and we won't print the cost every single token, instead we print it if it changes.
-
 	for {
 		evt, err := stream.Recv()
 		if err != nil {
-			if strings.Contains(err.Error(), "budget") || strings.Contains(err.Error(), "Budget") {
-				fmt.Printf("\n\n[!] STREAM ABORTED MID-GENERATION: %v\n", err)
-			} else if err.Error() == "EOF" {
+			if strings.Contains(strings.ToLower(err.Error()), "budget") {
+				fmt.Printf("\n\n[!] STREAM ABORTED: Budget Limit Reached! 🛑\n")
+			} else if err.Error() == "EOF" || strings.Contains(err.Error(), "stream closed") {
 				fmt.Println("\n\n[✓] Stream finished.")
 			} else {
 				fmt.Printf("\n[Error] %v\n", err)
@@ -95,22 +116,23 @@ func main() {
 
 		fmt.Print(evt.Token)
 
-		tokensSoFar += evt.OutputTokens
-		if evt.Token != "" && evt.OutputTokens == 0 {
+		// Estimate tokens if provider doesn't report them per-chunk
+		if evt.OutputTokens > 0 {
+			tokensSoFar = evt.OutputTokens
+		} else if evt.Token != "" {
 			tokensSoFar++
 		}
 
-		if tokensSoFar%25 == 0 {
-			costSoFar = otellix.CalculateCost("anthropic", "claude-sonnet-4-6", providers.CallResult{OutputTokens: tokensSoFar})
-			// Print a quick ephemeral status using carriage return (only works if we're on a separate line)
-			// Actually let's just emit an invisible ANSI sequence to set the title of the terminal
-			// fmt.Printf("\033]0;Otellix Live: %d tokens | $%.4f\007", tokensSoFar, costSoFar)
+		// Calculate live cost periodically
+		if tokensSoFar%10 == 0 {
+			costSoFar = otellix.CalculateCost(providerName, model, providers.CallResult{
+				OutputTokens: tokensSoFar,
+			})
 		}
 	}
 
-	// Print final cost manually since stream closed
-	fmt.Printf("\nFinal estimated cost inside loop: $%.6f\n", costSoFar)
-	fmt.Println("--- End ---")
+	fmt.Printf("\nFinal tokens: %d | Final estimated cost: $%.6f\n", tokensSoFar, costSoFar)
+	fmt.Println("--- End Demo ---")
 }
 
 // --- Simulated Provider for Testing ---
@@ -118,7 +140,7 @@ func main() {
 type simulatedProvider struct{}
 
 func (s *simulatedProvider) Call(ctx context.Context, params providers.CallParams) (providers.CallResult, error) {
-	return providers.CallResult{}, fmt.Errorf("not implemented")
+	return providers.CallResult{}, fmt.Errorf("simulated call not implemented")
 }
 func (s *simulatedProvider) Name() string { return "anthropic" }
 
@@ -128,42 +150,31 @@ type simulatedStream struct {
 }
 
 func (s *simulatedStream) Recv() (providers.StreamEvent, error) {
-	time.Sleep(50 * time.Millisecond) // Simulate network delay
+	time.Sleep(30 * time.Millisecond)
 	if s.idx >= len(s.tokens) {
-		importIOError := struct { // Need io.EOF without adding extra imports awkwardly, but wait we didn't import io.
-			// Let's just return a generic error called EOF
-		}{}
-		_ = importIOError
 		return providers.StreamEvent{}, fmt.Errorf("EOF")
 	}
 	tok := s.tokens[s.idx]
 	s.idx++
 	evt := providers.StreamEvent{Token: tok}
 	if s.idx == len(s.tokens) {
-		// at end, return full output token usage
 		evt.OutputTokens = int64(len(s.tokens))
 	} else if s.idx == 1 {
-		evt.InputTokens = 15 // Mock input
+		evt.InputTokens = 10
 	}
 	return evt, nil
 }
 func (s *simulatedStream) Close() error { return nil }
 
 func (s *simulatedProvider) Stream(ctx context.Context, params providers.CallParams) (providers.Stream, error) {
-	// A long mock response simulating an LLM generating lots of text slowly
 	story := "As the codebase flickered onto his screen in the dead of the night, " +
 		"a sudden realization struck the developer. The array indexes were completely misaligned! " +
 		"He scrambled to fix the problem, typing fiercely. Every second cost him precious budget, " +
 		"yet he couldn't stop. The LLM was helping, but it rambled on and on, explaining things " +
 		"he didn't need to hear. Still, the streaming letters continued pouring in..."
-	words := strings.Split(story, " ")
-	tokens := make([]string, 0, len(words))
-	for i, w := range words {
-		if i > 0 {
-			tokens = append(tokens, " ")
-		}
-		tokens = append(tokens, w)
+	tokens := strings.Split(story, " ")
+	for i := range tokens {
+		tokens[i] += " "
 	}
-
 	return &simulatedStream{tokens: tokens}, nil
 }

@@ -11,6 +11,7 @@ import (
 
 	openaisdk "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/openai/openai-go/packages/ssestream"
 )
 
 // Provider wraps the official OpenAI Go SDK and implements providers.Provider.
@@ -54,7 +55,7 @@ func (p *Provider) Call(ctx context.Context, params providers.CallParams) (provi
 
 	// Build request params.
 	reqParams := openaisdk.ChatCompletionNewParams{
-		Model:    model,
+		Model:    openaisdk.ChatModel(model),
 		Messages: messages,
 	}
 
@@ -117,5 +118,75 @@ func classifyError(model string, err error) error {
 
 // Stream sends a chat completion request to the OpenAI API and streams the response back.
 func (p *Provider) Stream(ctx context.Context, params providers.CallParams) (providers.Stream, error) {
-	return nil, errors.New("streaming not supported yet for openai")
+	model := params.Model
+	if model == "" {
+		model = "gpt-4o"
+	}
+
+	// Build messages.
+	messages := make([]openaisdk.ChatCompletionMessageParamUnion, 0, len(params.Messages)+1)
+	if params.SystemPrompt != "" {
+		messages = append(messages, openaisdk.SystemMessage(params.SystemPrompt))
+	}
+	for _, msg := range params.Messages {
+		switch msg.Role {
+		case "user":
+			messages = append(messages, openaisdk.UserMessage(msg.Content))
+		case "assistant":
+			messages = append(messages, openaisdk.AssistantMessage(msg.Content))
+		}
+	}
+
+	// Build request params.
+	reqParams := openaisdk.ChatCompletionNewParams{
+		Model:    openaisdk.ChatModel(model),
+		Messages: messages,
+	}
+	if params.MaxTokens > 0 {
+		reqParams.MaxCompletionTokens = openaisdk.Int(int64(params.MaxTokens))
+	}
+	if params.Temperature != nil {
+		reqParams.Temperature = openaisdk.Float(*params.Temperature)
+	}
+
+	// Execute the streaming API call.
+	stream := p.client.Chat.Completions.NewStreaming(ctx, reqParams)
+
+	return &openaiStream{
+		stream: stream,
+		model:  model,
+	}, nil
+}
+
+type openaiStream struct {
+	stream *ssestream.Stream[openaisdk.ChatCompletionChunk]
+	model  string
+}
+
+func (s *openaiStream) Recv() (providers.StreamEvent, error) {
+	if !s.stream.Next() {
+		if err := s.stream.Err(); err != nil {
+			return providers.StreamEvent{}, classifyError(s.model, err)
+		}
+		return providers.StreamEvent{}, fmt.Errorf("stream closed")
+	}
+
+	chunk := s.stream.Current()
+	event := providers.StreamEvent{}
+
+	if len(chunk.Choices) > 0 {
+		event.Token = chunk.Choices[0].Delta.Content
+	}
+
+	// OpenAI usually sends usage in the last chunk.
+	if chunk.Usage.PromptTokens > 0 {
+		event.InputTokens = int64(chunk.Usage.PromptTokens)
+		event.OutputTokens = int64(chunk.Usage.CompletionTokens)
+	}
+
+	return event, nil
+}
+
+func (s *openaiStream) Close() error {
+	return s.stream.Close()
 }

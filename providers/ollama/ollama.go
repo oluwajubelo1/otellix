@@ -2,6 +2,7 @@
 package ollama
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -72,6 +73,7 @@ type ollamaOptions struct {
 type ollamaResponse struct {
 	Model   string        `json:"model"`
 	Message ollamaMessage `json:"message"`
+	Done    bool          `json:"done"`
 
 	PromptEvalCount int64 `json:"prompt_eval_count"`
 	EvalCount       int64 `json:"eval_count"`
@@ -96,7 +98,7 @@ func (p *Provider) Call(ctx context.Context, params providers.CallParams) (provi
 	reqBody := ollamaRequest{
 		Model:    model,
 		Messages: messages,
-		Stream:   false, // non-streaming for simplicity
+		Stream:   false,
 	}
 
 	if params.Temperature != nil || params.MaxTokens > 0 {
@@ -143,7 +145,6 @@ func (p *Provider) Call(ctx context.Context, params providers.CallParams) (provi
 	return providers.CallResult{
 		InputTokens:  ollamaResp.PromptEvalCount,
 		OutputTokens: ollamaResp.EvalCount,
-		CachedTokens: 0,
 		Model:        ollamaResp.Model,
 		RawResponse:  ollamaResp,
 	}, nil
@@ -169,5 +170,98 @@ func classifyError(model string, err error) error {
 
 // Stream sends a chat completion request to the Ollama API and streams the response back.
 func (p *Provider) Stream(ctx context.Context, params providers.CallParams) (providers.Stream, error) {
-	return nil, errors.New("streaming not supported yet for ollama")
+	model := params.Model
+	if model == "" {
+		model = "llama3.2"
+	}
+
+	messages := make([]ollamaMessage, 0, len(params.Messages)+1)
+	if params.SystemPrompt != "" {
+		messages = append(messages, ollamaMessage{Role: "system", Content: params.SystemPrompt})
+	}
+	for _, msg := range params.Messages {
+		messages = append(messages, ollamaMessage{Role: msg.Role, Content: msg.Content})
+	}
+
+	reqBody := ollamaRequest{
+		Model:    model,
+		Messages: messages,
+		Stream:   true,
+	}
+	if params.Temperature != nil || params.MaxTokens > 0 {
+		reqBody.Options = &ollamaOptions{}
+		if params.Temperature != nil {
+			reqBody.Options.Temperature = params.Temperature
+		}
+		if params.MaxTokens > 0 {
+			reqBody.Options.NumPredict = params.MaxTokens
+		}
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("ollama: failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/api/chat", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("ollama: failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, classifyError(model, err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, &providers.ProviderError{
+			Provider: "ollama",
+			Model:    model,
+			Err:      fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody)),
+		}
+	}
+
+	return &ollamaStream{
+		body:    resp.Body,
+		scanner: bufio.NewScanner(resp.Body),
+		model:   model,
+	}, nil
+}
+
+type ollamaStream struct {
+	body    io.ReadCloser
+	scanner *bufio.Scanner
+	model   string
+}
+
+func (s *ollamaStream) Recv() (providers.StreamEvent, error) {
+	if !s.scanner.Scan() {
+		if err := s.scanner.Err(); err != nil {
+			return providers.StreamEvent{}, classifyError(s.model, err)
+		}
+		return providers.StreamEvent{}, io.EOF
+	}
+
+	var resp ollamaResponse
+	if err := json.Unmarshal(s.scanner.Bytes(), &resp); err != nil {
+		return providers.StreamEvent{}, fmt.Errorf("ollama: failed to decode stream chunk: %w", err)
+	}
+
+	event := providers.StreamEvent{
+		Token: resp.Message.Content,
+	}
+
+	if resp.Done {
+		event.InputTokens = resp.PromptEvalCount
+		event.OutputTokens = resp.EvalCount
+	}
+
+	return event, nil
+}
+
+func (s *ollamaStream) Close() error {
+	return s.body.Close()
 }
