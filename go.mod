@@ -2,6 +2,8 @@ module github.com/oluwajubelo1/otellix
 
 go 1.23.0
 
+toolchain go1.23.0
+
 require (
 	github.com/anthropics/anthropic-sdk-go v1.27.1
 	github.com/gin-gonic/gin v1.12.0
