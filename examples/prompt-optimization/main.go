@@ -26,7 +26,7 @@ func main() {
 	decorator := func(ctx context.Context, status otellix.BudgetStatus, params *providers.CallParams) {
 		budgetMsg := fmt.Sprintf("\n[BUDGET CONTEXT: You have $%.4f remaining for today. Please be extremely concise.]", status.Remaining)
 		params.SystemPrompt += budgetMsg
-		
+
 		// We can also dynamically adjust max tokens based on budget
 		if status.Remaining < 0.02 {
 			params.MaxTokens = 50
@@ -62,7 +62,7 @@ func main() {
 
 	fmt.Printf("Response: %s\n", res.RawResponse)
 	fmt.Printf("Final System Prompt used: %s\n", params.SystemPrompt)
-	
+
 	status := enforcer.Status(ctx, "user_456", "")
 	fmt.Printf("Final Budget Remaining: $%.4f\n", status.Remaining)
 }

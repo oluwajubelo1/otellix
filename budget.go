@@ -68,8 +68,6 @@ func (e *BudgetExceededError) Error() string {
 		e.UserID, e.ProjectID, e.CurrentSpend, e.Limit, e.ResetAt.Format(time.RFC3339))
 }
 
-
-
 // spendEntry tracks spend with time-bucketed counters for rolling window expiry.
 type spendEntry struct {
 	mu      sync.Mutex
@@ -148,8 +146,6 @@ func (s *InMemoryBudgetStore) GetResetTime(ctx context.Context, key string) time
 	oldest := entry.buckets[0].timestamp
 	return oldest.Add(s.interval)
 }
-
-
 
 // BudgetEnforcer checks and records budget usage.
 type BudgetEnforcer struct {
