@@ -23,8 +23,11 @@ jobs:
 
       - name: Formatter verification
         run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "Go code is not formatted. Run 'gofmt -w .'"
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "The following files are not formatted:"
+            echo "$UNFORMATTED"
+            echo "Please run 'gofmt -w .' on these files and push again."
             exit 1
           fi
 
