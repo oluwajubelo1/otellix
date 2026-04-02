@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
 
 	"github.com/oluwajubelo1/otellix/providers"
 
@@ -17,12 +18,26 @@ type Provider struct {
 	client *genai.Client
 }
 
-// New creates a new Gemini provider with the given API key.
-func New(ctx context.Context, apiKey string) (*Provider, error) {
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+// Option is a functional option for the Gemini provider.
+type Option func(*genai.ClientConfig)
+
+// WithHTTPClient sets a custom HTTP client for the Gemini provider.
+func WithHTTPClient(client *http.Client) Option {
+	return func(c *genai.ClientConfig) { c.HTTPClient = client }
+}
+
+// New creates a new Gemini provider with the given API key and options.
+func New(ctx context.Context, apiKey string, opts ...Option) (*Provider, error) {
+	config := &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
-	})
+	}
+
+	for _, opt := range opts {
+		opt(config)
+	}
+
+	client, err := genai.NewClient(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("gemini: failed to create client: %w", err)
 	}
