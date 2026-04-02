@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/oluwajubelo1/otellix/providers"
 
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 )
 
 // Provider wraps the official Anthropic SDK client and implements providers.Provider.
@@ -141,4 +143,82 @@ func classifyError(model string, err error) error {
 		Model:    model,
 		Err:      fmt.Errorf("API call failed: %w", err),
 	}
+}
+
+type anthropicStream struct {
+	base *ssestream.Stream[anthropicsdk.MessageStreamEventUnion]
+}
+
+func (s *anthropicStream) Recv() (providers.StreamEvent, error) {
+	if !s.base.Next() {
+		err := s.base.Err()
+		if err != nil {
+			return providers.StreamEvent{}, err
+		}
+		return providers.StreamEvent{}, io.EOF
+	}
+
+	evt := s.base.Current()
+	var res providers.StreamEvent
+
+	switch evt.Type {
+	case "message_start":
+		res.InputTokens = evt.Message.Usage.InputTokens
+	case "message_delta":
+		res.OutputTokens = evt.Usage.OutputTokens
+	case "content_block_delta":
+		res.Token = evt.Delta.Text
+	}
+
+	return res, nil
+}
+
+func (s *anthropicStream) Close() error {
+	return s.base.Close()
+}
+
+// Stream sends a request to the Anthropic API and streams the response back.
+func (p *Provider) Stream(ctx context.Context, params providers.CallParams) (providers.Stream, error) {
+	model := params.Model
+	if model == "" {
+		model = "claude-sonnet-4-6"
+	}
+
+	maxTokens := int64(params.MaxTokens)
+	if maxTokens == 0 {
+		maxTokens = 1024
+	}
+
+	messages := make([]anthropicsdk.MessageParam, 0, len(params.Messages))
+	for _, msg := range params.Messages {
+		switch msg.Role {
+		case "user":
+			messages = append(messages, anthropicsdk.NewUserMessage(
+				anthropicsdk.NewTextBlock(msg.Content),
+			))
+		case "assistant":
+			messages = append(messages, anthropicsdk.NewAssistantMessage(
+				anthropicsdk.NewTextBlock(msg.Content),
+			))
+		}
+	}
+
+	reqParams := anthropicsdk.MessageNewParams{
+		Model:     anthropicsdk.Model(model),
+		MaxTokens: maxTokens,
+		Messages:  messages,
+	}
+
+	if params.SystemPrompt != "" {
+		reqParams.System = []anthropicsdk.TextBlockParam{
+			{Text: params.SystemPrompt},
+		}
+	}
+
+	if params.Temperature != nil {
+		reqParams.Temperature = anthropicsdk.Float(*params.Temperature)
+	}
+
+	stream := p.client.Messages.NewStreaming(ctx, reqParams)
+	return &anthropicStream{base: stream}, nil
 }

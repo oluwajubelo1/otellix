@@ -4,6 +4,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 )
 
@@ -52,11 +53,29 @@ type Message struct {
 	Content string
 }
 
+// StreamEvent represents a single chunk of data streamed from the provider.
+type StreamEvent struct {
+	Token        string
+	InputTokens  int64 // Available if provider reports usage mid-stream or at end
+	OutputTokens int64 // Available if provider reports usage mid-stream or at end
+}
+
+// Stream represents an active stream from a provider.
+type Stream interface {
+	// Recv returns the next event. Returns io.EOF when the stream is completely finished.
+	Recv() (StreamEvent, error)
+	// Close terminates the stream early and releases resources.
+	Close() error
+}
+
 // Provider is the interface that every LLM provider wrapper must implement.
 // It abstracts the differences between providers into a single Call method.
 type Provider interface {
 	// Call sends a request to the LLM and returns a standardized result.
 	Call(ctx context.Context, params CallParams) (CallResult, error)
+
+	// Stream sends a request to the LLM and streams the response back.
+	Stream(ctx context.Context, params CallParams) (Stream, error)
 
 	// Name returns the provider identifier (e.g. "anthropic", "openai").
 	Name() string
@@ -134,6 +153,40 @@ func (m *MockProvider) Call(ctx context.Context, params CallParams) (CallResult,
 		result.Model = params.Model
 	}
 	return result, nil
+}
+
+type mockStream struct {
+	tokens []string
+	idx    int
+	result CallResult
+}
+
+func (s *mockStream) Recv() (StreamEvent, error) {
+	if s.idx >= len(s.tokens) {
+		return StreamEvent{InputTokens: s.result.InputTokens, OutputTokens: s.result.OutputTokens}, io.EOF
+	}
+	tok := s.tokens[s.idx]
+	s.idx++
+	return StreamEvent{Token: tok}, nil
+}
+
+func (s *mockStream) Close() error {
+	return nil
+}
+
+func (m *MockProvider) Stream(ctx context.Context, params CallParams) (Stream, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.CallCount++
+	m.LastParams = params
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	result := m.Result
+	if result.Model == "" {
+		result.Model = params.Model
+	}
+	return &mockStream{tokens: []string{"mock", " ", "stream", " ", "response"}, result: result}, nil
 }
 
 func (m *MockProvider) Name() string {

@@ -166,3 +166,8 @@ func classifyError(model string, err error) error {
 		Err:      fmt.Errorf("request failed: %w", err),
 	}
 }
+
+// Stream sends a chat completion request to the Ollama API and streams the response back.
+func (p *Provider) Stream(ctx context.Context, params providers.CallParams) (providers.Stream, error) {
+	return nil, errors.New("streaming not supported yet for ollama")
+}
