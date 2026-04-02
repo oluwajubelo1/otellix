@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 
 	"github.com/oluwajubelo1/otellix/providers"
 
@@ -109,5 +110,76 @@ func classifyError(model string, err error) error {
 
 // Stream sends a chat completion request to the Gemini API and streams the response back.
 func (p *Provider) Stream(ctx context.Context, params providers.CallParams) (providers.Stream, error) {
-	return nil, errors.New("streaming not supported yet for gemini")
+	model := params.Model
+	if model == "" {
+		model = "gemini-2.5-flash"
+	}
+
+	// Build the content parts.
+	var parts []*genai.Part
+	for _, msg := range params.Messages {
+		p := genai.NewPartFromText(msg.Content)
+		parts = append(parts, p)
+	}
+
+	contents := []*genai.Content{
+		genai.NewContentFromParts(parts, genai.RoleUser),
+	}
+
+	config := &genai.GenerateContentConfig{}
+	if params.MaxTokens > 0 {
+		config.MaxOutputTokens = int32(params.MaxTokens)
+	}
+	if params.Temperature != nil {
+		temp := float32(*params.Temperature)
+		config.Temperature = &temp
+	}
+	if params.SystemPrompt != "" {
+		config.SystemInstruction = &genai.Content{
+			Parts: []*genai.Part{genai.NewPartFromText(params.SystemPrompt)},
+		}
+	}
+
+	// Execute streaming.
+	seq := p.client.Models.GenerateContentStream(ctx, model, contents, config)
+	next, stop := iter.Pull2(seq)
+
+	return &geminiStream{
+		next:  next,
+		stop:  stop,
+		model: model,
+	}, nil
+}
+
+type geminiStream struct {
+	next  func() (*genai.GenerateContentResponse, error, bool)
+	stop  func()
+	model string
+}
+
+func (s *geminiStream) Recv() (providers.StreamEvent, error) {
+	resp, err, ok := s.next()
+	if !ok {
+		return providers.StreamEvent{}, fmt.Errorf("stream closed")
+	}
+	if err != nil {
+		return providers.StreamEvent{}, classifyError(s.model, err)
+	}
+
+	event := providers.StreamEvent{}
+	if len(resp.Candidates) > 0 && len(resp.Candidates[0].Content.Parts) > 0 {
+		event.Token = resp.Candidates[0].Content.Parts[0].Text
+	}
+
+	if resp.UsageMetadata != nil {
+		event.InputTokens = int64(resp.UsageMetadata.PromptTokenCount)
+		event.OutputTokens = int64(resp.UsageMetadata.CandidatesTokenCount)
+	}
+
+	return event, nil
+}
+
+func (s *geminiStream) Close() error {
+	s.stop()
+	return nil
 }
