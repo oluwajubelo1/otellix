@@ -2,6 +2,8 @@
 
 **Production-grade LLM observability for Go backends — built for cost-constrained markets.**
 
+[![CI](https://github.com/oluwajubelo1/otellix/actions/workflows/ci.yml/badge.svg)](https://github.com/oluwajubelo1/otellix/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/oluwajubelo1/otellix/graph/badge.svg)](https://codecov.io/gh/oluwajubelo1/otellix)
 [![Go Reference](https://pkg.go.dev/badge/github.com/oluwajubelo1/otellix.svg)](https://pkg.go.dev/github.com/oluwajubelo1/otellix)
 [![Go Report Card](https://goreportcard.com/badge/github.com/oluwajubelo1/otellix)](https://goreportcard.com/report/github.com/oluwajubelo1/otellix)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
