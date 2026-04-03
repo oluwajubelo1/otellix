@@ -10,12 +10,19 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/oluwajubelo1/otellix)](https://goreportcard.com/report/github.com/oluwajubelo1/otellix)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+## 📖 Comprehensive Documentation
+
+*   [**Architecture Overview**](docs/architecture.md) — How Otellix works with OpenTelemetry.
+*   [**LLM Providers**](docs/providers.md) — Setting up OpenAI, Anthropic, Gemini, and Ollama.
+*   [**Budget Guardrails**](docs/budget-guardrails.md) — Implementing cost policies and mid-stream cutoffs.
+*   [**Native Streaming**](docs/streaming.md) — High-performance real-time observability.
+
 ## Why Otellix
 
 - **Go-Native first.** No Python "sidecars" or heavy frameworks needed. If you're building LLM features in Go, Otellix is your production-ready bridge between AI and Observability.
-- **Standards-based.** Built entirely on **OpenTelemetry**. Traces, spans, and metrics are standard-compliant, ensuring zero vendor lock-in. Switch between Jaeger, Honeycomb, Datadog, or Grafana without changing your code.
-- **Cost Guardrails.** The only Go SDK that treats LLM costs as a first-class citizen. Attribution per-user, per-feature, and per-project with automatic **Budget Cutoffs** that block or notification mid-stream when limits are hit.
-- **Ollama Ready.** Full, high-performance support for local LLMs via Ollama, including real-time NDJSON streaming with zero external dependencies.
+- **Standards-based.** Built entirely on **OpenTelemetry**. Traces, spans, and metrics are standard-compliant. Switch between Jaeger, Honeycomb, Datadog, or Grafana without changing your code.
+- **Cost Guardrails.** The only Go SDK with **Budget Cutoffs** that block or notify mid-stream when limits are hit.
+- **Ollama Ready.** Full support for local LLMs via Ollama, with real-time NDJSON streaming and zero external dependencies.
 
 ## Quick Start
 
