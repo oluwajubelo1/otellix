@@ -14,7 +14,7 @@ func TestRedisBudgetStore(t *testing.T) {
 	client := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
-	
+
 	// Check if Redis is available, skip if not.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -51,7 +51,7 @@ func TestRedisBudgetStore(t *testing.T) {
 	now := time.Now()
 	store.AddSpend(ctx, key, 1.00)
 	resetAt := store.GetResetTime(ctx, key)
-	
+
 	expectedReset := now.Add(interval)
 	if resetAt.Sub(expectedReset).Abs() > 2*time.Second {
 		t.Errorf("reset time %v is too far from expected %v", resetAt, expectedReset)

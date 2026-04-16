@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/oluwajubelo1/otellix"
+	"github.com/redis/go-redis/v9"
 )
 
 // RedisBudgetStore implements the otellix.BudgetStore interface using Redis Sorted Sets.
@@ -101,13 +101,13 @@ func (s *RedisBudgetStore) AddSpend(ctx context.Context, key string, amount floa
 // GetResetTime returns when the oldest spend event in the current window will expire.
 func (s *RedisBudgetStore) GetResetTime(ctx context.Context, key string) time.Time {
 	fullKey := fmt.Sprintf("%s:%s", s.prefix, key)
-	
+
 	// Get the oldest member in the set (lowest score).
 	res, err := s.client.ZRANGEWithScores(ctx, fullKey, 0, 0).Result()
 	if err != nil || len(res) == 0 {
 		return time.Now().Add(s.interval)
 	}
-	
+
 	oldest := time.Unix(int64(res[0].Score), 0)
 	return oldest.Add(s.interval)
 }
