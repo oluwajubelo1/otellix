@@ -12,7 +12,7 @@ import (
 func TestTraceSuccess(t *testing.T) {
 	mock := &providers.MockProvider{
 		Result: providers.CallResult{
-			InputTokens: 245, OutputTokens: 891, CachedTokens: 50,
+			InputTokens: 245, OutputTokens: 891, CacheReadTokens: 50,
 			Model: "claude-sonnet-4-6",
 		},
 	}

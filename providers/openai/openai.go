@@ -81,10 +81,8 @@ func (p *Provider) Call(ctx context.Context, params providers.CallParams) (provi
 		RawResponse:  resp,
 	}
 
-	// OpenAI reports cached tokens in prompt_tokens_details.
-	if resp.Usage.PromptTokensDetails.CachedTokens > 0 {
-		result.CachedTokens = int64(resp.Usage.PromptTokensDetails.CachedTokens)
-	}
+	// OpenAI reports cached tokens (hits) in prompt_tokens_details.
+	result.CacheReadTokens = int64(resp.Usage.PromptTokensDetails.CachedTokens)
 
 	return result, nil
 }

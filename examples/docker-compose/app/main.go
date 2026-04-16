@@ -76,10 +76,10 @@ func main() {
 		mock := &providers.MockProvider{
 			ProviderName: m.provider,
 			Result: providers.CallResult{
-				InputTokens:  int64(100 + rand.Intn(2000)),
-				OutputTokens: int64(50 + rand.Intn(1500)),
-				CachedTokens: int64(rand.Intn(200)),
-				Model:        m.model,
+				InputTokens:     int64(100 + rand.Intn(2000)),
+				OutputTokens:    int64(50 + rand.Intn(1500)),
+				CacheReadTokens: int64(rand.Intn(200)),
+				Model:           m.model,
 			},
 		}
 

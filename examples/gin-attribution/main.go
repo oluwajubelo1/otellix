@@ -1,14 +1,13 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/oluwajubelo1/otellix"
 	otellixmw "github.com/oluwajubelo1/otellix/middleware"
+	"github.com/oluwajubelo1/otellix/providers"
 	"github.com/oluwajubelo1/otellix/providers/openai"
 )
 

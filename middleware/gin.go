@@ -17,7 +17,6 @@
 package middleware
 
 import (
-	"context"
 	"strings"
 
 	"github.com/gin-gonic/gin"

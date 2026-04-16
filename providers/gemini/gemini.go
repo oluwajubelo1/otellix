@@ -97,7 +97,7 @@ func (p *Provider) Call(ctx context.Context, params providers.CallParams) (provi
 	if resp.UsageMetadata != nil {
 		result.InputTokens = int64(resp.UsageMetadata.PromptTokenCount)
 		result.OutputTokens = int64(resp.UsageMetadata.CandidatesTokenCount)
-		result.CachedTokens = int64(resp.UsageMetadata.CachedContentTokenCount)
+		result.CacheReadTokens = int64(resp.UsageMetadata.CachedContentTokenCount)
 	}
 
 	return result, nil
