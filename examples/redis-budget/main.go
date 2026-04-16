@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/oluwajubelo1/otellix"
+	"github.com/oluwajubelo1/otellix/providers"
 	"github.com/oluwajubelo1/otellix/providers/openai"
 	otellixredis "github.com/oluwajubelo1/otellix/stores/redis"
 	"github.com/redis/go-redis/v9"

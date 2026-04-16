@@ -16,8 +16,11 @@ type CallResult struct {
 	// OutputTokens is the number of tokens in the completion/output.
 	OutputTokens int64
 
-	// CachedTokens is the number of tokens served from cache (Anthropic prompt caching, etc.).
-	CachedTokens int64
+	// CacheReadTokens is the number of tokens read from cache (cache hits).
+	CacheReadTokens int64
+
+	// CacheWriteTokens is the number of tokens used to create/update cache (cache creation).
+	CacheWriteTokens int64
 
 	// Model is the actual model used (may differ from requested if provider auto-selects).
 	Model string

@@ -103,7 +103,7 @@ func (s *RedisBudgetStore) GetResetTime(ctx context.Context, key string) time.Ti
 	fullKey := fmt.Sprintf("%s:%s", s.prefix, key)
 
 	// Get the oldest member in the set (lowest score).
-	res, err := s.client.ZRANGEWithScores(ctx, fullKey, 0, 0).Result()
+	res, err := s.client.ZRangeWithScores(ctx, fullKey, 0, 0).Result()
 	if err != nil || len(res) == 0 {
 		return time.Now().Add(s.interval)
 	}

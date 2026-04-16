@@ -17,8 +17,6 @@
 package middleware
 
 import (
-	"context"
-
 	echo "github.com/labstack/echo/v4"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
