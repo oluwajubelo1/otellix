@@ -20,11 +20,12 @@ Most LLM observability tools tell you what you spent *after* the money is gone. 
 
 ## ⚡ Key Features
 
-- **🛡️ Mid-Stream Budget Cutoffs**: The only Go SDK that can **abort a stream mid-flight** if a user hits their cost or token budget. Stop the drain while the text is still generating.
-- **🚀 Go-Native & High-Performance**: Built for Go 1.23 using native iterators. No heavy Python sidecars or external proxies required.
-- **📊 Standard-Compliant (OTel)**: 100% OpenTelemetry compliant. Works out-of-the-box with Jaeger, Honeycomb, Prometheus, and Grafana.
-- **🏠 Ollama Ready**: First-class support for local LLMs via Ollama with zero-dependency NDJSON streaming.
-- **📉 Smart Fallbacks**: Automatically swap `gpt-4o` for `gpt-4o-mini` (or your local Llama3 instance) when the budget is running low.
+- **⛓️ LangChainGo Integration**: Drop-in `callbacks.Handler` for LangChainGo. Zero-config cost tracking for complex chains.
+- **🔌 Zero-Config Attribution**: Automatically capture `user_id` and `project_id` from Gin/Echo middleware. No more manual context plumbing.
+- **🗄️ Redis Budget Store**: Distributed budget enforcement for high-availability production clusters.
+- **🚀 Go-Native & High-Performance**: Built for Go 1.22+ using native streaming and OpenTelemetry. 
+- **📊 Standard-Compliant (OTel)**: 100% OTel compliant. Works with Jaeger, Honeycomb, Prometheus, and Grafana.
+- **💎 Prompt Caching ROI**: Track exactly how much you save with Anthropic/OpenAI prompt caching.
 
 ---
 
@@ -38,78 +39,62 @@ go get github.com/oluwajubelo1/otellix
 Wrap your provider calls to get instant cost attribution and standard OTel spans.
 
 ```go
-package main
-
-import (
-    "context"
-    "github.com/oluwajubelo1/otellix"
-    "github.com/oluwajubelo1/otellix/providers/openai"
+p := openai.New()
+result, err := otellix.Trace(ctx, p, params,
+    otellix.WithUserID("user_456"),
 )
-
-func main() {
-    shutdown := otellix.SetupDev() // Logs to OTel Collector
-    defer shutdown()
-
-    p := openai.New()
-    result, err := otellix.Trace(context.Background(), p, 
-        providers.CallParams{
-            Model: "gpt-4o",
-            Messages: []providers.Message{{Role: "user", Content: "Hello world"}},
-        },
-        otellix.WithUserID("user_456"),
-    )
-}
 ```
 
-### 2. Real-Time Budget Enforcement
-Track token accumulation live and interrupt a stream if the budget is breached.
+### 2. LangChainGo Integration
+Just add the Otellix handler to your LLM configuration.
 
 ```go
-stream, err := otellix.TraceStream(ctx, provider, params,
-    otellix.WithUserID("user_123"),
-    otellix.WithBudgetConfig(dailyLimit_1USD),
-)
+import "github.com/oluwajubelo1/otellix/integrations/langchaingo"
 
-for evt, err := range stream.Iter() { // Go 1.23 Iterators
-    if err != nil {
-        if errors.Is(err, otellix.ErrBudgetExceeded) {
-            fmt.Println("\n[!] Stream killed: Budget limit reached.")
-        }
-        break
-    }
-    fmt.Print(evt.Token)
-}
+handler := langchaingo.NewOtellixHandler()
+p, _ := openai.New(openai.WithCallback(handler))
+
+// Automatically captures all chain events, costs, and spans.
+res, err := p.GenerateContent(ctx, parts)
+```
+
+### 3. Middleware Attribution
+Stop manually passing IDs. Use our middleware to discover identity from headers/sessions.
+
+```go
+r := gin.Default()
+r.Use(otellixgin.Middleware()) // Automatically populates context with User/Project IDs
 ```
 
 ---
 
 ## 📊 Standardized OTel Attributes
-Otellix populates your spans with industry-standard attributes, making your Jaeger/Grafana dashboards powerful and searchable:
+Otellix populates your spans with industry-standard attributes:
 
 | Attribute | Description |
 |---|---|
-| `llm.provider` | The LLM provider (OpenAI, Ollama, etc.) |
-| `llm.model` | The specific model used (e.g., `gpt-4o`, `llama3`) |
+| `llm.provider` | The LLM provider (OpenAI, Anthropic, etc.) |
+| `llm.usage.cache_read_tokens` | Tokens served from provider cache (Savings!) |
 | `llm.cost_usd` | Real-time USD cost of the call |
-| `llm.usage.total_tokens` | Cumulative token count |
-| `llm.budget.blocked` | Boolean flag if the call was blocked by guardrails |
+| `llm.budget.blocked` | Flag if the call was blocked by guardrails |
 
 ---
 
 ## 🏗️ Supported Providers
 
-- **Anthropic**: Claude 3.5 Sonnet, Opus, Haiku (with prompt caching).
-- **OpenAI**: GPT-4o, GPT-4o-mini, GPT-3.5-Turbo.
+- **Anthropic**: Claude 3.5 with full **Prompt Caching** metrics.
+- **OpenAI**: GPT-4o, GPT-4o-mini with caching support.
 - **Google Gemini**: Gemini 1.5 Pro & Flash.
-- **Ollama**: Any local model (Llama3, Mistral, Phi-3).
+- **Ollama**: Local models with zero-dependency streaming.
 
 ---
 
 ## 📖 Deep Dives
 *   [**Architecture**](docs/architecture.md) — How Otellix fits into the OTel ecosystem.
-*   [**Budget Guardrails**](docs/budget-guardrails.md) — Setting up cost policies & stores.
-*   [**Native Streaming**](docs/streaming.md) — High-performance real-time observability.
-*   [**Examples**](examples/) — Docker-Compose setup with Grafana/Tempo pre-configured.
+*   [**Budget Guardrails**](docs/budget-guardrails.md) — Redis & InMemory stores.
+*   [**Integrations**](docs/integrations.md) — LangChainGo setup.
+*   [**Middleware & Identity**](docs/middleware.md) — Zero-config attribution.
+*   [**Prompt Caching**](docs/caching.md) — ROI analysis and tracking.
 
 ---
 

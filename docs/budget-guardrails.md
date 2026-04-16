@@ -17,7 +17,25 @@ config := &otellix.BudgetConfig{
 ```
 
 ### 2. The Budget Store (`otellix.BudgetStore`)
-Where usage metrics are persisted. By default, Otellix provides an `InMemoryBudgetStore` which is perfect for dev/test or single-instance applications. For high-availability production environments, you can implement a Redis or Database-backed store.
+Where usage metrics are persisted. 
+
+- **`InMemoryBudgetStore`**: Perfect for dev/test or single-instance applications.
+- **`RedisBudgetStore`**: Required for distributed production environments to ensure consistent budget enforcement across multiple app instances.
+
+```go
+import "github.com/oluwajubelo1/otellix/stores/redis"
+
+store := redis.NewBudgetStore(redis.Config{
+    Addr:     "localhost:6379",
+    Password: "your-password",
+    DB:       0,
+})
+
+config := &otellix.BudgetConfig{
+    Store: store,
+    PerUserDailyLimit: 5.00,
+}
+```
 
 ## Fallback Actions
 
