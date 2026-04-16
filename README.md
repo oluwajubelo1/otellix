@@ -1,36 +1,41 @@
 # Otellix
 
-**Production-grade LLM observability for Go backends — built for cost-constrained markets.**
+**Stop the LLM Bill Shock. Production-grade observability for Go backends — built on OpenTelemetry.**
 
 ![LLM Observability Dashboard Mockup](assets/dashboard_mockup.png)
 
 [![CI](https://github.com/oluwajubelo1/otellix/actions/workflows/ci.yml/badge.svg)](https://github.com/oluwajubelo1/otellix/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/oluwajubelo1/otellix/graph/badge.svg)](https://codecov.io/gh/oluwajubelo1/otellix)
 [![Go Reference](https://pkg.go.dev/badge/github.com/oluwajubelo1/otellix.svg)](https://pkg.go.dev/github.com/oluwajubelo1/otellix)
 [![Go Report Card](https://goreportcard.com/badge/github.com/oluwajubelo1/otellix)](https://goreportcard.com/report/github.com/oluwajubelo1/otellix)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 📖 Comprehensive Documentation
+---
 
-*   [**Architecture Overview**](docs/architecture.md) — How Otellix works with OpenTelemetry.
-*   [**LLM Providers**](docs/providers.md) — Setting up OpenAI, Anthropic, Gemini, and Ollama.
-*   [**Budget Guardrails**](docs/budget-guardrails.md) — Implementing cost policies and mid-stream cutoffs.
-*   [**Native Streaming**](docs/streaming.md) — High-performance real-time observability.
+### 💸 The Problem: "Bill Shock" is Real
+Most LLM observability tools tell you what you spent *after* the money is gone. In production, a recursive prompt loop or a single "power user" can rack up thousands in costs before your billing alerts even trigger. 
 
-## Why Otellix
+**Otellix is different.** It brings real-time cost enforcement to the application layer.
 
-- **Go-Native first.** No Python "sidecars" or heavy frameworks needed. If you're building LLM features in Go, Otellix is your production-ready bridge between AI and Observability.
-- **Standards-based.** Built entirely on **OpenTelemetry**. Traces, spans, and metrics are standard-compliant. Switch between Jaeger, Honeycomb, Datadog, or Grafana without changing your code.
-- **Cost Guardrails.** The only Go SDK with **Budget Cutoffs** that block or notify mid-stream when limits are hit.
-- **Ollama Ready.** Full support for local LLMs via Ollama, with real-time NDJSON streaming and zero external dependencies.
+---
 
-## Quick Start
+## ⚡ Key Features
+
+- **🛡️ Mid-Stream Budget Cutoffs**: The only Go SDK that can **abort a stream mid-flight** if a user hits their cost or token budget. Stop the drain while the text is still generating.
+- **🚀 Go-Native & High-Performance**: Built for Go 1.23 using native iterators. No heavy Python sidecars or external proxies required.
+- **📊 Standard-Compliant (OTel)**: 100% OpenTelemetry compliant. Works out-of-the-box with Jaeger, Honeycomb, Prometheus, and Grafana.
+- **🏠 Ollama Ready**: First-class support for local LLMs via Ollama with zero-dependency NDJSON streaming.
+- **📉 Smart Fallbacks**: Automatically swap `gpt-4o` for `gpt-4o-mini` (or your local Llama3 instance) when the budget is running low.
+
+---
+
+## 🚀 Quick Start
 
 ```bash
 go get github.com/oluwajubelo1/otellix
 ```
 
-### Simple Tracing
+### 1. Simple Tracing
+Wrap your provider calls to get instant cost attribution and standard OTel spans.
 
 ```go
 package main
@@ -42,98 +47,72 @@ import (
 )
 
 func main() {
-    shutdown := otellix.SetupDev()
+    shutdown := otellix.SetupDev() // Logs to OTel Collector
     defer shutdown()
 
-    provider := openai.New() // Uses OPENAI_API_KEY env
-
-    result, err := otellix.Trace(context.Background(), provider, 
+    p := openai.New()
+    result, err := otellix.Trace(context.Background(), p, 
         providers.CallParams{
             Model: "gpt-4o",
             Messages: []providers.Message{{Role: "user", Content: "Hello world"}},
         },
-        otellix.WithFeatureID("chat"),
-        otellix.WithUserID("user_007"),
+        otellix.WithUserID("user_456"),
     )
-    // ...
 }
 ```
 
-## Native Real-time Streaming
-
-Otellix supports native Go 1.23 iterators for streaming. It tracks token accumulation in real-time and can **abort a stream mid-flight** if the user hits their budget limit.
+### 2. Real-Time Budget Enforcement
+Track token accumulation live and interrupt a stream if the budget is breached.
 
 ```go
 stream, err := otellix.TraceStream(ctx, provider, params,
     otellix.WithUserID("user_123"),
-    otellix.WithBudgetConfig(budgetCfg),
+    otellix.WithBudgetConfig(dailyLimit_1USD),
 )
-defer stream.Close()
 
-for {
-    evt, err := stream.Recv()
+for evt, err := range stream.Iter() { // Go 1.23 Iterators
     if err != nil {
-        if strings.Contains(err.Error(), "budget") {
-            fmt.Println("\n[!] CUTOFF: User ran out of money mid-response!")
+        if errors.Is(err, otellix.ErrBudgetExceeded) {
+            fmt.Println("\n[!] Stream killed: Budget limit reached.")
         }
         break
     }
-    fmt.Print(evt.Token) // Watch it stream live...
+    fmt.Print(evt.Token)
 }
 ```
 
-## Features
+---
 
-| Feature | Description | Providers |
-|---|---|---|
-| **Real-time Streaming** | Native Go iterators with usage tracking | OpenAI, Anthropic, Gemini, Ollama |
-| **Cost Attribution** | USD cost per call/user/feature/project | All Cloud Providers |
-| **Budget Guardrails** | Per-user/project daily ceilings (Block/Notify/Downgrade) | All |
-| **Local LLM Native** | Direct NDJSON parsing for Ollama (no overhead) | Ollama |
-| **Prompt Optimization**| Dynamic prompts based on real-time budget telemetry | All |
-| **Standard OTel** | 100% compliant Spans, Attributes, and Metrics | All |
+## 📊 Standardized OTel Attributes
+Otellix populates your spans with industry-standard attributes, making your Jaeger/Grafana dashboards powerful and searchable:
 
-## Local LLM Observability (Ollama)
-
-Otellix treats **Ollama** as a first-class provider. It implements a zero-dependency, high-performance NDJSON parser to ensure your local traces are as detailed as your cloud production environment.
-
-```go
-provider := ollama.New(ollama.WithBaseURL("http://localhost:11434"))
-// Everything else is the same — Otellix abstracts the details.
-```
-
-## Budget Guardrails & Fallbacks
-
-| Mode | Behaviour |
+| Attribute | Description |
 |---|---|
-| `FallbackBlock` | Block the call (or abort the stream) immediately if limit is hit. |
-| `FallbackNotify` | Proceed with the call but emit a `budget.warning` OTel event. |
-| `FallbackDowngrade`| Automatically swap `gpt-4o` for `gpt-4o-mini` if budget is low. |
+| `llm.provider` | The LLM provider (OpenAI, Ollama, etc.) |
+| `llm.model` | The specific model used (e.g., `gpt-4o`, `llama3`) |
+| `llm.cost_usd` | Real-time USD cost of the call |
+| `llm.usage.total_tokens` | Cumulative token count |
+| `llm.budget.blocked` | Boolean flag if the call was blocked by guardrails |
 
-## OTel Attributes (Standardized)
+---
 
-Otellix populates your spans with standardized attributes for powerful querying in Grafana/Honeycomb:
-*   `llm.provider`, `llm.model`, `llm.feature_id`, `llm.user_id`, `llm.project_id`
-*   `llm.input_tokens`, `llm.output_tokens`, `llm.cost_usd`, `llm.latency_ms`
-*   `llm.budget_blocked`, `llm.prompt_fingerprint`
+## 🏗️ Supported Providers
 
-## Grafana Dashboard
+- **Anthropic**: Claude 3.5 Sonnet, Opus, Haiku (with prompt caching).
+- **OpenAI**: GPT-4o, GPT-4o-mini, GPT-3.5-Turbo.
+- **Google Gemini**: Gemini 1.5 Pro & Flash.
+- **Ollama**: Any local model (Llama3, Mistral, Phi-3).
 
-A pre-built dashboard is included in `examples/docker-compose`. View live token usage, cost growth, and budget utilization in seconds.
+---
 
-```bash
-cd examples/docker-compose && docker-compose up
-```
+## 📖 Deep Dives
+*   [**Architecture**](docs/architecture.md) — How Otellix fits into the OTel ecosystem.
+*   [**Budget Guardrails**](docs/budget-guardrails.md) — Setting up cost policies & stores.
+*   [**Native Streaming**](docs/streaming.md) — High-performance real-time observability.
+*   [**Examples**](examples/) — Docker-Compose setup with Grafana/Tempo pre-configured.
 
-## Supported Providers
+---
 
-*   **Anthropic**: Claude 3.5 Sonnet, Opus, Haiku (with prompt caching metrics).
-*   **OpenAI**: GPT-4o, GPT-4o-mini, GPT-3.5-Turbo.
-*   **Google Gemini**: Gemini 1.5 Pro & Flash (via Native SDK).
-*   **Ollama**: Any local model (Llama3, Mistral, Phi-3).
-
-## Contributing & License
-
-We love contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md).
+## 🤝 Contributing
+We love stars and contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md).
 Licensed under **MIT**.
-LICENSE).
