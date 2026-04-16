@@ -23,8 +23,8 @@ func defaultDevPrinter(cfg *Config, result *providers.CallResult, costUSD, laten
 
 	// Line 2: tokens | cost | latency
 	fmt.Printf("          tokens: %d in + %d out", result.InputTokens, result.OutputTokens)
-	if result.CachedTokens > 0 {
-		fmt.Printf(" (%d cached)", result.CachedTokens)
+	if result.CacheReadTokens > 0 || result.CacheWriteTokens > 0 {
+		fmt.Printf(" (cache: %d hit, %d write)", result.CacheReadTokens, result.CacheWriteTokens)
 	}
 	fmt.Printf(" | cost: $%.6f | latency: %s\n", costUSD, latencyStr)
 

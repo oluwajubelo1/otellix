@@ -20,21 +20,21 @@ func TestCalculateCost(t *testing.T) {
 			name:     "anthropic/claude-opus-4-6",
 			provider: "anthropic",
 			model:    "claude-opus-4-6",
-			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CachedTokens: 0},
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
 			wantCost: (1000.0*15.0 + 500.0*75.0) / 1_000_000,
 		},
 		{
 			name:     "anthropic/claude-sonnet-4-6",
 			provider: "anthropic",
 			model:    "claude-sonnet-4-6",
-			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CachedTokens: 200},
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 200, CacheWriteTokens: 0},
 			wantCost: (1000.0*3.0 + 500.0*15.0 + 200.0*0.30) / 1_000_000,
 		},
 		{
 			name:     "anthropic/claude-haiku-4-5",
 			provider: "anthropic",
 			model:    "claude-haiku-4-5",
-			result:   providers.CallResult{InputTokens: 5000, OutputTokens: 1000, CachedTokens: 0},
+			result:   providers.CallResult{InputTokens: 5000, OutputTokens: 1000, CacheReadTokens: 0, CacheWriteTokens: 0},
 			wantCost: (5000.0*0.80 + 1000.0*4.0) / 1_000_000,
 		},
 		// --- OpenAI ---
@@ -42,14 +42,14 @@ func TestCalculateCost(t *testing.T) {
 			name:     "openai/gpt-4o",
 			provider: "openai",
 			model:    "gpt-4o",
-			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CachedTokens: 100},
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 100, CacheWriteTokens: 0},
 			wantCost: (1000.0*2.50 + 500.0*10.0 + 100.0*1.25) / 1_000_000,
 		},
 		{
 			name:     "openai/gpt-4o-mini",
 			provider: "openai",
 			model:    "gpt-4o-mini",
-			result:   providers.CallResult{InputTokens: 2000, OutputTokens: 800, CachedTokens: 0},
+			result:   providers.CallResult{InputTokens: 2000, OutputTokens: 800, CacheReadTokens: 0, CacheWriteTokens: 0},
 			wantCost: (2000.0*0.15 + 800.0*0.60) / 1_000_000,
 		},
 		// --- Gemini ---
@@ -57,14 +57,14 @@ func TestCalculateCost(t *testing.T) {
 			name:     "gemini/gemini-2.5-pro",
 			provider: "gemini",
 			model:    "gemini-2.5-pro",
-			result:   providers.CallResult{InputTokens: 3000, OutputTokens: 1000, CachedTokens: 500},
+			result:   providers.CallResult{InputTokens: 3000, OutputTokens: 1000, CacheReadTokens: 500, CacheWriteTokens: 0},
 			wantCost: (3000.0*1.25 + 1000.0*10.0 + 500.0*0.31) / 1_000_000,
 		},
 		{
 			name:     "gemini/gemini-2.5-flash",
 			provider: "gemini",
 			model:    "gemini-2.5-flash",
-			result:   providers.CallResult{InputTokens: 10000, OutputTokens: 2000, CachedTokens: 0},
+			result:   providers.CallResult{InputTokens: 10000, OutputTokens: 2000, CacheReadTokens: 0, CacheWriteTokens: 0},
 			wantCost: (10000.0*0.075 + 2000.0*0.30) / 1_000_000,
 		},
 		// --- Ollama (free) ---
@@ -72,7 +72,7 @@ func TestCalculateCost(t *testing.T) {
 			name:     "ollama/llama3",
 			provider: "ollama",
 			model:    "llama3",
-			result:   providers.CallResult{InputTokens: 5000, OutputTokens: 2000, CachedTokens: 0},
+			result:   providers.CallResult{InputTokens: 5000, OutputTokens: 2000, CacheReadTokens: 0, CacheWriteTokens: 0},
 			wantCost: 0,
 		},
 		// --- Edge cases ---
@@ -87,14 +87,14 @@ func TestCalculateCost(t *testing.T) {
 			name:     "zero tokens",
 			provider: "anthropic",
 			model:    "claude-sonnet-4-6",
-			result:   providers.CallResult{InputTokens: 0, OutputTokens: 0, CachedTokens: 0},
+			result:   providers.CallResult{InputTokens: 0, OutputTokens: 0, CacheReadTokens: 0, CacheWriteTokens: 0},
 			wantCost: 0,
 		},
 		{
 			name:     "cached tokens only",
 			provider: "anthropic",
 			model:    "claude-sonnet-4-6",
-			result:   providers.CallResult{InputTokens: 0, OutputTokens: 0, CachedTokens: 1000},
+			result:   providers.CallResult{InputTokens: 0, OutputTokens: 0, CacheReadTokens: 1000, CacheWriteTokens: 0},
 			wantCost: (1000.0 * 0.30) / 1_000_000,
 		},
 	}
@@ -142,9 +142,10 @@ func TestGetPricing(t *testing.T) {
 
 func TestRegisterModel(t *testing.T) {
 	otellix.RegisterModel("custom", "my-model", otellix.PricingEntry{
-		InputPricePerMToken:  5.0,
-		OutputPricePerMToken: 25.0,
-		CachePricePerMToken:  0.5,
+		InputPricePerMToken:      5.0,
+		OutputPricePerMToken:     25.0,
+		CacheReadPricePerMToken:  0.5,
+		CacheWritePricePerMToken: 1.0,
 	})
 
 	entry, ok := otellix.GetPricing("custom", "my-model")
@@ -157,9 +158,9 @@ func TestRegisterModel(t *testing.T) {
 
 	// Test cost calculation with custom model.
 	cost := otellix.CalculateCost("custom", "my-model", providers.CallResult{
-		InputTokens: 1_000_000, OutputTokens: 1_000_000, CachedTokens: 1_000_000,
+		InputTokens: 1_000_000, OutputTokens: 1_000_000, CacheReadTokens: 1_000_000, CacheWriteTokens: 1_000_000,
 	})
-	want := 5.0 + 25.0 + 0.5
+	want := 5.0 + 25.0 + 0.5 + 1.0
 	if diff := cost - want; diff > 1e-9 || diff < -1e-9 {
 		t.Errorf("cost = %f, want %f", cost, want)
 	}

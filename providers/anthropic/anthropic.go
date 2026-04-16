@@ -90,10 +90,9 @@ func (p *Provider) Call(ctx context.Context, params providers.CallParams) (provi
 		RawResponse:  resp,
 	}
 
-	// Extract cached tokens if available (Anthropic prompt caching).
-	if resp.Usage.CacheReadInputTokens > 0 {
-		result.CachedTokens = resp.Usage.CacheReadInputTokens
-	}
+	// Extract cached tokens (Anthropic prompt caching).
+	result.CacheReadTokens = resp.Usage.CacheReadInputTokens
+	result.CacheWriteTokens = resp.Usage.CacheCreationInputTokens
 
 	return result, nil
 }

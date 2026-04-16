@@ -29,6 +29,8 @@ var (
 	costCounter       metric.Float64Counter
 	latencyHist       metric.Float64Histogram
 	errorsCount       metric.Int64Counter
+	cacheReadCount    metric.Int64Counter
+	cacheWriteCount   metric.Int64Counter
 )
 
 // initMetrics creates OTel metric instruments. Safe to call multiple times.
@@ -56,6 +58,14 @@ func initMetrics() {
 		errorsCount, _ = meter.Int64Counter("otellix.llm.errors.total",
 			metric.WithDescription("Total number of LLM call errors"),
 		)
+		cacheReadCount, _ = meter.Int64Counter("otellix.llm.tokens.cache_read",
+			metric.WithDescription("Total tokens read from cache (hits)"),
+			metric.WithUnit("{token}"),
+		)
+		cacheWriteCount, _ = meter.Int64Counter("otellix.llm.tokens.cache_write",
+			metric.WithDescription("Total tokens used to create/update cache"),
+			metric.WithUnit("{token}"),
+		)
 	})
 }
 
@@ -81,6 +91,14 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	// Fill in model from params if not set via options.
 	if cfg.Model == "" {
 		cfg.Model = params.Model
+	}
+
+	// Automatic identity extraction from context (middleware support).
+	if cfg.UserID == "" {
+		cfg.UserID = UserFromContext(ctx)
+	}
+	if cfg.ProjectID == "" {
+		cfg.ProjectID = ProjectFromContext(ctx)
 	}
 
 	var enforcer *BudgetEnforcer
@@ -177,7 +195,8 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	span.SetAttributes(
 		attribute.Int64("llm.input_tokens", result.InputTokens),
 		attribute.Int64("llm.output_tokens", result.OutputTokens),
-		attribute.Int64("llm.cached_tokens", result.CachedTokens),
+		attribute.Int64("llm.cache_read_tokens", result.CacheReadTokens),
+		attribute.Int64("llm.cache_write_tokens", result.CacheWriteTokens),
 		attribute.Float64("llm.latency_ms", latencyMs),
 	)
 
@@ -186,6 +205,8 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 
 	inputTokensCount.Add(ctx, result.InputTokens, metricAttrs)
 	outputTokensCount.Add(ctx, result.OutputTokens, metricAttrs)
+	cacheReadCount.Add(ctx, result.CacheReadTokens, metricAttrs)
+	cacheWriteCount.Add(ctx, result.CacheWriteTokens, metricAttrs)
 	costCounter.Add(ctx, costUSD, metricAttrs)
 	latencyHist.Record(ctx, latencyMs, metricAttrs)
 

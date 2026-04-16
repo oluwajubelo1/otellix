@@ -29,7 +29,7 @@ ANTHROPIC_API_KEY=your_key go run examples/realtime-stream/main.go
 
 Implementing an untested LLM provider? Here is our design philosophy:
 1. Wrap the provider using the `providers/provider.go` abstractions.
-2. Build native mappings ensuring tokens (`InputTokens`, `OutputTokens`, `CachedTokens`) are explicitly collected securely inside your wrapper, alongside natively catching RateLimit and Timeout logic specifically.
+2. Build native mappings ensuring tokens (`InputTokens`, `OutputTokens`, `CacheReadTokens`, `CacheWriteTokens`) are explicitly collected securely inside your wrapper, alongside natively catching RateLimit and Timeout logic specifically.
 3. Update the global pricing dictionary in `cost.go` dynamically with base metrics.
 4. Open a Pull Request targeting `/feat/[featurename]`.
 

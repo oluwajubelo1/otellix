@@ -1,6 +1,42 @@
 // Package otellix provides OpenTelemetry-native LLM observability for Go.
 package otellix
 
+import "context"
+
+// contextKey is a private type to avoid collisions in context.Context.
+type contextKey string
+
+const (
+	userIDKey    contextKey = "otellix.user_id"
+	projectIDKey contextKey = "otellix.project_id"
+)
+
+// ContextWithUser returns a new context with the given UserID.
+func ContextWithUser(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, userIDKey, userID)
+}
+
+// ContextWithProject returns a new context with the given ProjectID.
+func ContextWithProject(ctx context.Context, projectID string) context.Context {
+	return context.WithValue(ctx, projectIDKey, projectID)
+}
+
+// UserFromContext retrieves the UserID from the context, if present.
+func UserFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(userIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// ProjectFromContext retrieves the ProjectID from the context, if present.
+func ProjectFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(projectIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
 // Config holds the configuration for a single traced LLM call.
 type Config struct {
 	// Provider identifies the LLM provider (e.g. "anthropic", "openai", "gemini", "ollama").

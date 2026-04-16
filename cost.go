@@ -8,9 +8,10 @@ import (
 
 // PricingEntry holds the per-million-token pricing for a specific model.
 type PricingEntry struct {
-	InputPricePerMToken  float64 // USD per 1 million input tokens
-	OutputPricePerMToken float64 // USD per 1 million output tokens
-	CachePricePerMToken  float64 // USD per 1 million cached tokens (0 if N/A)
+	InputPricePerMToken      float64 // USD per 1 million input tokens
+	OutputPricePerMToken     float64 // USD per 1 million output tokens
+	CacheReadPricePerMToken  float64 // USD per 1 million cached tokens read (hits)
+	CacheWritePricePerMToken float64 // USD per 1 million cached tokens written (creation)
 }
 
 // pricingTable holds the default pricing keyed by "provider/model".
@@ -19,20 +20,20 @@ var (
 	pricingMu    sync.RWMutex
 	pricingTable = map[string]PricingEntry{
 		// --- Anthropic ---
-		"anthropic/claude-opus-4-6":   {InputPricePerMToken: 15.0, OutputPricePerMToken: 75.0, CachePricePerMToken: 1.50},
-		"anthropic/claude-sonnet-4-6": {InputPricePerMToken: 3.0, OutputPricePerMToken: 15.0, CachePricePerMToken: 0.30},
-		"anthropic/claude-haiku-4-5":  {InputPricePerMToken: 0.80, OutputPricePerMToken: 4.0, CachePricePerMToken: 0.08},
+		"anthropic/claude-opus-4-6":   {InputPricePerMToken: 15.0, OutputPricePerMToken: 75.0, CacheReadPricePerMToken: 1.50, CacheWritePricePerMToken: 18.75},
+		"anthropic/claude-sonnet-4-6": {InputPricePerMToken: 3.0, OutputPricePerMToken: 15.0, CacheReadPricePerMToken: 0.30, CacheWritePricePerMToken: 3.75},
+		"anthropic/claude-haiku-4-5":  {InputPricePerMToken: 0.80, OutputPricePerMToken: 4.0, CacheReadPricePerMToken: 0.08, CacheWritePricePerMToken: 1.00},
 
 		// --- OpenAI ---
-		"openai/gpt-4o":      {InputPricePerMToken: 2.50, OutputPricePerMToken: 10.0, CachePricePerMToken: 1.25},
-		"openai/gpt-4o-mini": {InputPricePerMToken: 0.15, OutputPricePerMToken: 0.60, CachePricePerMToken: 0.075},
+		"openai/gpt-4o":      {InputPricePerMToken: 2.50, OutputPricePerMToken: 10.0, CacheReadPricePerMToken: 1.25, CacheWritePricePerMToken: 2.50},
+		"openai/gpt-4o-mini": {InputPricePerMToken: 0.15, OutputPricePerMToken: 0.60, CacheReadPricePerMToken: 0.075, CacheWritePricePerMToken: 0.15},
 
 		// --- Google Gemini ---
-		"gemini/gemini-2.5-pro":   {InputPricePerMToken: 1.25, OutputPricePerMToken: 10.0, CachePricePerMToken: 0.31},
-		"gemini/gemini-2.5-flash": {InputPricePerMToken: 0.075, OutputPricePerMToken: 0.30, CachePricePerMToken: 0.018},
+		"gemini/gemini-2.5-pro":   {InputPricePerMToken: 1.25, OutputPricePerMToken: 10.0, CacheReadPricePerMToken: 0.31, CacheWritePricePerMToken: 1.25},
+		"gemini/gemini-2.5-flash": {InputPricePerMToken: 0.075, OutputPricePerMToken: 0.30, CacheReadPricePerMToken: 0.018, CacheWritePricePerMToken: 0.075},
 
 		// --- Ollama (local, free) ---
-		"ollama/any": {InputPricePerMToken: 0, OutputPricePerMToken: 0, CachePricePerMToken: 0},
+		"ollama/any": {InputPricePerMToken: 0, OutputPricePerMToken: 0, CacheReadPricePerMToken: 0, CacheWritePricePerMToken: 0},
 	}
 )
 
@@ -52,9 +53,10 @@ func CalculateCost(provider, model string, result providers.CallResult) float64 
 
 	inputCost := float64(result.InputTokens) * entry.InputPricePerMToken / 1_000_000
 	outputCost := float64(result.OutputTokens) * entry.OutputPricePerMToken / 1_000_000
-	cacheCost := float64(result.CachedTokens) * entry.CachePricePerMToken / 1_000_000
+	readCacheCost := float64(result.CacheReadTokens) * entry.CacheReadPricePerMToken / 1_000_000
+	writeCacheCost := float64(result.CacheWriteTokens) * entry.CacheWritePricePerMToken / 1_000_000
 
-	return inputCost + outputCost + cacheCost
+	return inputCost + outputCost + readCacheCost + writeCacheCost
 }
 
 // EstimateCost estimates the cost assuming the given number of output tokens.

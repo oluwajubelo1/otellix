@@ -35,11 +35,6 @@ func main() {
 			return
 		}
 
-		// user_id and project_id are automatically picked up from the
-		// middleware-injected context values.
-		userID := middleware.UserIDFromContext(c.Request.Context())
-		projectID := middleware.ProjectIDFromContext(c.Request.Context())
-
 		result, err := otellix.Trace(
 			c.Request.Context(),
 			provider,
@@ -52,8 +47,6 @@ func main() {
 				},
 			},
 			otellix.WithFeatureID("ask-endpoint"),
-			otellix.WithUserID(userID),
-			otellix.WithProjectID(projectID),
 		)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

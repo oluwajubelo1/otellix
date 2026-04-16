@@ -17,12 +17,12 @@
 package middleware
 
 import (
-	"context"
-
 	echo "github.com/labstack/echo/v4"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/oluwajubelo1/otellix"
 )
 
 // EchoMiddleware returns an Echo middleware that extracts user_id and project_id
@@ -45,14 +45,14 @@ func EchoMiddleware(opts ...MiddlewareOption) echo.MiddlewareFunc {
 			userID := extractUserIDFromJWT(c.Request().Header.Get("Authorization"), cfg.JWTClaim)
 			if userID != "" {
 				span.SetAttributes(attribute.String("llm.user_id", userID))
-				ctx = context.WithValue(ctx, userIDKey, userID)
+				ctx = otellix.ContextWithUser(ctx, userID)
 			}
 
 			// Extract project_id from header.
 			projectID := c.Request().Header.Get(cfg.ProjectHeader)
 			if projectID != "" {
 				span.SetAttributes(attribute.String("llm.project_id", projectID))
-				ctx = context.WithValue(ctx, projectIDKey, projectID)
+				ctx = otellix.ContextWithProject(ctx, projectID)
 			}
 
 			// Set request attributes.
