@@ -6,10 +6,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/oluwajubelo1/otellix"
 	"github.com/oluwajubelo1/otellix/providers/openai"
 	otellixredis "github.com/oluwajubelo1/otellix/stores/redis"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -50,7 +50,7 @@ func main() {
 		fmt.Printf("\n--- Call #%d ---\n", i)
 
 		_, err := otellix.Trace(ctx, provider, providers.CallParams{
-			Model: "gpt-4o",
+			Model:    "gpt-4o",
 			Messages: []providers.Message{{Role: "user", Content: "Tell me a short joke about Go."}},
 		},
 			otellix.WithUserID("user_redis_demo"),
@@ -59,14 +59,14 @@ func main() {
 
 		if err != nil {
 			fmt.Printf("❌ Call Blocked: %v\n", err)
-			
+
 			// In a real app, you might want to see when the budget resets.
 			if budgetErr, ok := err.(*otellix.BudgetExceededError); ok {
 				fmt.Printf("⏳ Budget will reset at: %s\n", budgetErr.ResetAt.Format(time.Kitchen))
 			}
 			break
 		}
-		
+
 		fmt.Println("✅ Call Successful (recorded in Redis)")
 	}
 }

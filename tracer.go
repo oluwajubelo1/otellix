@@ -83,6 +83,14 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		cfg.Model = params.Model
 	}
 
+	// Automatic identity extraction from context (middleware support).
+	if cfg.UserID == "" {
+		cfg.UserID = UserFromContext(ctx)
+	}
+	if cfg.ProjectID == "" {
+		cfg.ProjectID = ProjectFromContext(ctx)
+	}
+
 	var enforcer *BudgetEnforcer
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)

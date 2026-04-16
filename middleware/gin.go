@@ -26,14 +26,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	jwt "github.com/golang-jwt/jwt/v5"
-)
-
-// Context keys for user/project extraction.
-type contextKey string
-
-const (
-	userIDKey    contextKey = "otellix.user_id"
-	projectIDKey contextKey = "otellix.project_id"
+	"github.com/oluwajubelo1/otellix"
 )
 
 // MiddlewareConfig holds configuration for HTTP middleware.
@@ -84,14 +77,14 @@ func GinMiddleware(opts ...MiddlewareOption) gin.HandlerFunc {
 		userID := extractUserIDFromJWT(c.GetHeader("Authorization"), cfg.JWTClaim)
 		if userID != "" {
 			span.SetAttributes(attribute.String("llm.user_id", userID))
-			ctx = context.WithValue(ctx, userIDKey, userID)
+			ctx = otellix.ContextWithUser(ctx, userID)
 		}
 
 		// Extract project_id from header.
 		projectID := c.GetHeader(cfg.ProjectHeader)
 		if projectID != "" {
 			span.SetAttributes(attribute.String("llm.project_id", projectID))
-			ctx = context.WithValue(ctx, projectIDKey, projectID)
+			ctx = otellix.ContextWithProject(ctx, projectID)
 		}
 
 		// Set request attributes.
@@ -106,22 +99,6 @@ func GinMiddleware(opts ...MiddlewareOption) gin.HandlerFunc {
 		// Set response status.
 		span.SetAttributes(attribute.Int("http.status_code", c.Writer.Status()))
 	}
-}
-
-// UserIDFromContext returns the user_id injected by the middleware.
-func UserIDFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(userIDKey).(string); ok {
-		return v
-	}
-	return ""
-}
-
-// ProjectIDFromContext returns the project_id injected by the middleware.
-func ProjectIDFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(projectIDKey).(string); ok {
-		return v
-	}
-	return ""
 }
 
 // extractUserIDFromJWT parses a JWT from the Authorization header and extracts
