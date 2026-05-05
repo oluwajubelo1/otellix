@@ -130,6 +130,25 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		cfg.PromptDecorator(ctx, status, &params)
 	}
 
+	// Hook 1: Dedup cache check — return cached result immediately if available.
+	if cfg.CacheConfig != nil {
+		cacheKey := makeCacheKey(cfg.Provider, cfg.Model, params)
+		if cached, ok := cfg.CacheConfig.Store.Get(ctx, cacheKey); ok {
+			return cached, nil
+		}
+	}
+
+	// Hook 2: Pre-call anomaly block check.
+	if cfg.AnomalyConfig != nil && cfg.AnomalyConfig.Action == AnomalyBlock {
+		estimated := EstimateCost(cfg.Provider, cfg.Model, 500)
+		if detection, isAnomaly := checkAnomaly(cfg, estimated); isAnomaly {
+			if cfg.AnomalyConfig.OnAnomaly != nil {
+				cfg.AnomalyConfig.OnAnomaly(ctx, detection)
+			}
+			return providers.CallResult{}, &AnomalyBlockedError{Detection: detection}
+		}
+	}
+
 	spanName := cfg.SpanName
 	if spanName == "" {
 		spanName = defaultSpanName
@@ -210,6 +229,26 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	costCounter.Add(ctx, costUSD, metricAttrs)
 	latencyHist.Record(ctx, latencyMs, metricAttrs)
 
+	// Hook 3: Cache result in dedup store + record to analytics tracker.
+	if cfg.CacheConfig != nil {
+		cacheKey := makeCacheKey(cfg.Provider, cfg.Model, params)
+		cfg.CacheConfig.Store.Set(ctx, cacheKey, result, cfg.CacheConfig.TTL)
+	}
+	recordCall(CallRecord{
+		Timestamp:        time.Now(),
+		Provider:         cfg.Provider,
+		Model:            cfg.Model,
+		FeatureID:        cfg.FeatureID,
+		UserID:           cfg.UserID,
+		ProjectID:        cfg.ProjectID,
+		InputTokens:      result.InputTokens,
+		OutputTokens:     result.OutputTokens,
+		CacheReadTokens:  result.CacheReadTokens,
+		CacheWriteTokens: result.CacheWriteTokens,
+		CostUSD:          costUSD,
+		LatencyMs:        latencyMs,
+	})
+
 	if enforcer != nil {
 		enforcer.Record(ctx, cfg.UserID, cfg.ProjectID, costUSD)
 
@@ -221,6 +260,22 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 				attribute.String("llm.project_id", cfg.ProjectID),
 				attribute.Float64("llm.budget_remaining", remaining),
 			))
+		}
+	}
+
+	// Hook 4: Post-call anomaly logging.
+	if cfg.AnomalyConfig != nil && cfg.AnomalyConfig.Action == AnomalyLog {
+		if detection, isAnomaly := checkAnomaly(cfg, costUSD); isAnomaly {
+			span.AddEvent("llm.anomaly", trace.WithAttributes(
+				attribute.String("llm.anomaly.key", detection.Key),
+				attribute.Float64("llm.anomaly.current_cost", detection.CurrentCost),
+				attribute.Float64("llm.anomaly.average_cost", detection.AverageCost),
+				attribute.Float64("llm.anomaly.multiplier", detection.Multiplier),
+				attribute.Float64("llm.anomaly.threshold", detection.Threshold),
+			))
+			if cfg.AnomalyConfig.OnAnomaly != nil {
+				cfg.AnomalyConfig.OnAnomaly(ctx, detection)
+			}
 		}
 	}
 

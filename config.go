@@ -74,6 +74,12 @@ type Config struct {
 
 	// PromptDecorator is a function that can modify prompt params based on budget context.
 	PromptDecorator PromptDecorator
+
+	// CacheConfig holds request deduplication configuration. Nil means no caching.
+	CacheConfig *CacheConfig
+
+	// AnomalyConfig holds cost anomaly detection configuration. Nil means no anomaly detection.
+	AnomalyConfig *AnomalyConfig
 }
 
 // Option is a functional option for configuring a traced LLM call.
@@ -135,6 +141,16 @@ func WithBudgetConfig(bc *BudgetConfig) Option {
 // WithPromptDecorator sets a function to dynamically decorate prompts based on budget.
 func WithPromptDecorator(pd PromptDecorator) Option {
 	return func(c *Config) { c.PromptDecorator = pd }
+}
+
+// WithRequestCache enables request deduplication with the given cache configuration.
+func WithRequestCache(cfg *CacheConfig) Option {
+	return func(c *Config) { c.CacheConfig = cfg }
+}
+
+// WithAnomalyDetection enables cost anomaly detection with the given configuration.
+func WithAnomalyDetection(cfg *AnomalyConfig) Option {
+	return func(c *Config) { c.AnomalyConfig = cfg }
 }
 
 // NewConfig creates a Config from functional options.

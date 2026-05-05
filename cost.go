@@ -105,3 +105,17 @@ func RegisterModel(provider, model string, entry PricingEntry) {
 	defer pricingMu.Unlock()
 	pricingTable[key] = entry
 }
+
+// ListPricing returns a snapshot of all known provider/model pricing entries.
+// The returned map's keys are in "provider/model" format (e.g., "anthropic/claude-sonnet-4-6").
+// This is useful for analyzing pricing data and suggesting model alternatives.
+func ListPricing() map[string]PricingEntry {
+	pricingMu.RLock()
+	defer pricingMu.RUnlock()
+
+	out := make(map[string]PricingEntry, len(pricingTable))
+	for k, v := range pricingTable {
+		out[k] = v
+	}
+	return out
+}

@@ -2,12 +2,17 @@
 
 **Stop the LLM Bill Shock. Production-grade observability for Go backends — built on OpenTelemetry.**
 
-![LLM Observability Dashboard Mockup](assets/dashboard_mockup.png)
+![Otellix Dashboard](assets/demo_dashboard.png)
+
+<div align="center">
+  <a href="https://oluwajubelo1.github.io/otellix/docs/demo/"><strong>Live Interactive Demo →</strong></a>
+</div>
 
 [![CI](https://github.com/oluwajubelo1/otellix/actions/workflows/ci.yml/badge.svg)](https://github.com/oluwajubelo1/otellix/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/oluwajubelo1/otellix.svg)](https://pkg.go.dev/github.com/oluwajubelo1/otellix)
 [![Go Report Card](https://goreportcard.com/badge/github.com/oluwajubelo1/otellix)](https://goreportcard.com/report/github.com/oluwajubelo1/otellix)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 
 ---
 
@@ -34,6 +39,14 @@ Most LLM observability tools tell you what you spent *after* the money is gone. 
 ```bash
 go get github.com/oluwajubelo1/otellix
 ```
+
+### 🕹️ Try it Locally (Docker)
+Want to see the full stack (Prometheus + Grafana) in action? Run our one-liner demo:
+```bash
+curl -sL https://raw.githubusercontent.com/oluwajubelo1/otellix/main/scripts/demo.sh | bash
+```
+
+---
 
 ### 1. Simple Tracing
 Wrap your provider calls to get instant cost attribution and standard OTel spans.
