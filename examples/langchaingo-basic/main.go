@@ -24,7 +24,12 @@ func main() {
 	}
 
 	// 2. Initialise the LangChainGo OpenAI LLM with the Otellix Callback Handler.
-	otellixHandler := langchaingo.NewOtellixHandler()
+	// LangChainGo does not expose provider/model in its callbacks, so we
+	// configure them explicitly to enable accurate cost tracking.
+	otellixHandler := langchaingo.NewOtellixHandler(
+		langchaingo.WithProvider("openai"),
+		langchaingo.WithModel("gpt-4o"),
+	)
 	llm, err := openai.New(openai.WithCallback(otellixHandler))
 	if err != nil {
 		log.Fatalf("Failed to create OpenAI LLM: %v", err)

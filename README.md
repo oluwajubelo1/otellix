@@ -25,7 +25,7 @@ Most LLM observability tools tell you what you spent *after* the money is gone. 
 
 ## ⚡ Key Features
 
-- **⛓️ LangChainGo Integration**: Drop-in `callbacks.Handler` for LangChainGo. Zero-config cost tracking for complex chains.
+- **⛓️ LangChainGo Integration**: Drop-in `callbacks.Handler` for LangChainGo. Automatic token, cost, and span capture for chains.
 - **🔌 Zero-Config Attribution**: Automatically capture `user_id` and `project_id` from Gin/Echo middleware. No more manual context plumbing.
 - **🗄️ Redis Budget Store**: Distributed budget enforcement for high-availability production clusters.
 - **🚀 Go-Native & High-Performance**: Built for Go 1.22+ using native streaming and OpenTelemetry. 
@@ -64,12 +64,20 @@ Just add the Otellix handler to your LLM configuration.
 ```go
 import "github.com/oluwajubelo1/otellix/integrations/langchaingo"
 
-handler := langchaingo.NewOtellixHandler()
+handler := langchaingo.NewOtellixHandler(
+	langchaingo.WithProvider("openai"), // required for accurate llm.cost_usd
+	langchaingo.WithModel("gpt-4o"),
+)
 p, _ := openai.New(openai.WithCallback(handler))
 
-// Automatically captures all chain events, costs, and spans.
+// Automatically captures token usage, cost, and spans.
 res, err := p.GenerateContent(ctx, parts)
 ```
+
+The handler records `llm.*` attributes on a span in the context, or creates its
+own `llm.call` span if none exists, so telemetry is always captured. Set
+`WithProvider`/`WithModel` (LangChainGo doesn't expose them in its callbacks)
+to enable cost tracking.
 
 ### 3. Middleware Attribution
 Stop manually passing IDs. Use our middleware to discover identity from headers/JWTs.
