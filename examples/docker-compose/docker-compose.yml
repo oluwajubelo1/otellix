@@ -1,6 +1,13 @@
 version: '3.8'
 
 services:
+  # Redis — shared budget store for distributed enforcement (used by examples/redis-budget)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   # Otellix demo app — makes mock LLM calls and exposes Prometheus metrics
   otellix-demo:
     build:

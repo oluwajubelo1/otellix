@@ -20,7 +20,7 @@ func main() {
 	defer shutdown()
 
 	// 2. Initialise Redis client.
-	// Ensure you have Redis running: docker-compose -f docker-compose.dev.yml up -d
+	// Ensure you have Redis running: docker compose up -d redis (see examples/docker-compose)
 	rdb := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
