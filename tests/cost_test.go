@@ -21,7 +21,7 @@ func TestCalculateCost(t *testing.T) {
 			provider: "anthropic",
 			model:    "claude-opus-4-6",
 			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
-			wantCost: (1000.0*15.0 + 500.0*75.0) / 1_000_000,
+			wantCost: (1000.0*5.0 + 500.0*25.0) / 1_000_000,
 		},
 		{
 			name:     "anthropic/claude-sonnet-4-6",
@@ -65,7 +65,179 @@ func TestCalculateCost(t *testing.T) {
 			provider: "gemini",
 			model:    "gemini-2.5-flash",
 			result:   providers.CallResult{InputTokens: 10000, OutputTokens: 2000, CacheReadTokens: 0, CacheWriteTokens: 0},
-			wantCost: (10000.0*0.075 + 2000.0*0.30) / 1_000_000,
+			wantCost: (10000.0*0.30 + 2000.0*2.50) / 1_000_000,
+		},
+		// --- OpenAI newer ---
+		{
+			name:     "openai/gpt-5.4",
+			provider: "openai",
+			model:    "gpt-5.4",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*2.50 + 500.0*15.0) / 1_000_000,
+		},
+		{
+			name:     "openai/gpt-5-mini",
+			provider: "openai",
+			model:    "gpt-5-mini",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.25 + 500.0*2.0) / 1_000_000,
+		},
+		{
+			name:     "openai/o3",
+			provider: "openai",
+			model:    "o3",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*2.0 + 500.0*8.0) / 1_000_000,
+		},
+		{
+			name:     "openai/gpt-oss-120b",
+			provider: "openai",
+			model:    "gpt-oss-120b",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.30 + 500.0*1.20) / 1_000_000,
+		},
+		// --- Anthropic newer ---
+		{
+			name:     "anthropic/claude-sonnet-5",
+			provider: "anthropic",
+			model:    "claude-sonnet-5",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*3.0 + 500.0*15.0) / 1_000_000,
+		},
+		{
+			name:     "anthropic/claude-opus-5",
+			provider: "anthropic",
+			model:    "claude-opus-5",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*5.0 + 500.0*25.0) / 1_000_000,
+		},
+		{
+			name:     "anthropic/claude-haiku-3",
+			provider: "anthropic",
+			model:    "claude-haiku-3",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.25 + 500.0*1.25) / 1_000_000,
+		},
+		// --- Gemini newer ---
+		{
+			name:     "gemini/gemini-3.6-flash",
+			provider: "gemini",
+			model:    "gemini-3.6-flash",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*1.50 + 500.0*7.50) / 1_000_000,
+		},
+		{
+			name:     "gemini/gemini-3.1-pro",
+			provider: "gemini",
+			model:    "gemini-3.1-pro",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*2.0 + 500.0*12.0) / 1_000_000,
+		},
+		// --- Kimi (Moonshot) ---
+		{
+			name:     "kimi/kimi-k3",
+			provider: "kimi",
+			model:    "kimi-k3",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*3.0 + 500.0*15.0) / 1_000_000,
+		},
+		{
+			name:     "kimi/kimi-k2.6",
+			provider: "kimi",
+			model:    "kimi-k2.6",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.95 + 500.0*4.0) / 1_000_000,
+		},
+		{
+			name:     "kimi/kimi-k2",
+			provider: "kimi",
+			model:    "kimi-k2",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.60 + 500.0*2.50) / 1_000_000,
+		},
+		// --- DeepSeek ---
+		{
+			name:     "deepseek/deepseek-v4",
+			provider: "deepseek",
+			model:    "deepseek-v4",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.30 + 500.0*0.50) / 1_000_000,
+		},
+		{
+			name:     "deepseek/deepseek-r1",
+			provider: "deepseek",
+			model:    "deepseek-r1",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.55 + 500.0*2.19) / 1_000_000,
+		},
+		{
+			name:     "deepseek/deepseek-chat",
+			provider: "deepseek",
+			model:    "deepseek-chat",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.28 + 500.0*0.42) / 1_000_000,
+		},
+		// --- Qwen ---
+		{
+			name:     "qwen/qwen3.5-397b",
+			provider: "qwen",
+			model:    "qwen3.5-397b",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.60 + 500.0*3.60) / 1_000_000,
+		},
+		{
+			name:     "qwen/qwen3.7-flash",
+			provider: "qwen",
+			model:    "qwen3.7-flash",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.03 + 500.0*0.13) / 1_000_000,
+		},
+		// --- GLM ---
+		{
+			name:     "glm/glm-5.2",
+			provider: "glm",
+			model:    "glm-5.2",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*1.40 + 500.0*4.40) / 1_000_000,
+		},
+		{
+			name:     "glm/glm-4.5-air",
+			provider: "glm",
+			model:    "glm-4.5-air",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.20 + 500.0*1.10) / 1_000_000,
+		},
+		// --- ERNIE ---
+		{
+			name:     "ernie/ernie-4.5",
+			provider: "ernie",
+			model:    "ernie-4.5",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.55 + 500.0*2.20) / 1_000_000,
+		},
+		// --- Hunyuan ---
+		{
+			name:     "hunyuan/hunyuan-hy3",
+			provider: "hunyuan",
+			model:    "hunyuan-hy3",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*0.063 + 500.0*0.21) / 1_000_000,
+		},
+		// --- Mistral ---
+		{
+			name:     "mistral/mistral-large",
+			provider: "mistral",
+			model:    "mistral-large",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*2.0 + 500.0*6.0) / 1_000_000,
+		},
+		// --- Grok ---
+		{
+			name:     "grok/grok-4",
+			provider: "grok",
+			model:    "grok-4",
+			result:   providers.CallResult{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 0, CacheWriteTokens: 0},
+			wantCost: (1000.0*3.0 + 500.0*15.0) / 1_000_000,
 		},
 		// --- Ollama (free) ---
 		{
