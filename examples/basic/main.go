@@ -20,7 +20,7 @@ import (
 )
 
 func main() {
-	shutdown := otellix.SetupDev()
+	shutdown := otellix.SetupDevConsole()
 	defer shutdown()
 
 	var provider providers.Provider

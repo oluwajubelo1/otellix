@@ -54,8 +54,8 @@ func main() {
 		providerName = "anthropic"
 	}
 
-	// Setup stdout dev exporter to see OpenTelemetry spans at the end
-	otellix.SetupDev()
+	// Setup the clean console dev printer to see a summary of the span at the end
+	otellix.SetupDevConsole()
 
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Printf("\n=== Otellix Real-time Streaming [%s] ===\n", providerName)
