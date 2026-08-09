@@ -106,10 +106,14 @@ Otellix populates your spans with industry-standard attributes:
 
 ## 🏗️ Supported Providers
 
-- **Anthropic**: Claude 3.5 with full **Prompt Caching** metrics.
-- **OpenAI**: GPT-4o, GPT-4o-mini with caching support.
-- **Google Gemini**: Gemini 1.5 Pro & Flash.
+**Provider wrappers** (drop-in `Call`/`Stream`):
+
+- **Anthropic**: Claude Opus/Sonnet/Haiku families with full **Prompt Caching** metrics.
+- **OpenAI**: GPT-5.x, GPT-4.x, o-series, gpt-oss with caching support.
+- **Google Gemini**: Gemini 3.x, 2.5, 2.0 & 1.5 Pro/Flash.
 - **Ollama**: Local models with zero-dependency streaming.
+
+**Pricing-only support** (built-in cost table for `llm.cost_usd`; bring your own provider/API): Kimi (Moonshot), DeepSeek, Qwen, GLM, ERNIE, Hunyuan, Mistral, Grok, plus every model above — 130+ models total. See [docs/providers.md](docs/providers.md).
 
 ---
 
