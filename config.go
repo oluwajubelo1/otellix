@@ -1,7 +1,10 @@
 // Package otellix provides OpenTelemetry-native LLM observability for Go.
 package otellix
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // contextKey is a private type to avoid collisions in context.Context.
 type contextKey string
@@ -9,6 +12,8 @@ type contextKey string
 const (
 	userIDKey    contextKey = "otellix.user_id"
 	projectIDKey contextKey = "otellix.project_id"
+	agentKey     contextKey = "otellix.agent"
+	stepKey      contextKey = "otellix.step"
 )
 
 // ContextWithUser returns a new context with the given UserID.
@@ -35,6 +40,33 @@ func ProjectFromContext(ctx context.Context) string {
 		return v
 	}
 	return ""
+}
+
+// ContextWithAgent returns a new context tagged with an agent name (for agent
+// frameworks like LangGraph built on LangChainGo).
+func ContextWithAgent(ctx context.Context, agent string) context.Context {
+	return context.WithValue(ctx, agentKey, agent)
+}
+
+// AgentFromContext retrieves the agent name from the context, if present.
+func AgentFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(agentKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// ContextWithStep returns a new context tagged with an agent step number.
+func ContextWithStep(ctx context.Context, step int) context.Context {
+	return context.WithValue(ctx, stepKey, step)
+}
+
+// StepFromContext retrieves the agent step from the context, if present.
+func StepFromContext(ctx context.Context) int {
+	if v, ok := ctx.Value(stepKey).(int); ok {
+		return v
+	}
+	return 0
 }
 
 // Config holds the configuration for a single traced LLM call.
@@ -80,6 +112,18 @@ type Config struct {
 
 	// AnomalyConfig holds cost anomaly detection configuration. Nil means no anomaly detection.
 	AnomalyConfig *AnomalyConfig
+
+	// RetryConfig holds automatic retry settings for provider calls. Nil means no retries.
+	RetryConfig *RetryConfig
+
+	// CaptureContent enables capturing prompt/response text on spans, with
+	// optional redaction applied. Nil means no content capture.
+	CaptureContent *CaptureConfig
+
+	// Timeout bounds the entire traced LLM call (including retries and streaming).
+	// If set, a deadline is derived from the caller's context before the provider
+	// is invoked. Zero means no timeout — the caller owns cancellation.
+	Timeout time.Duration
 }
 
 // Option is a functional option for configuring a traced LLM call.
@@ -151,6 +195,32 @@ func WithRequestCache(cfg *CacheConfig) Option {
 // WithAnomalyDetection enables cost anomaly detection with the given configuration.
 func WithAnomalyDetection(cfg *AnomalyConfig) Option {
 	return func(c *Config) { c.AnomalyConfig = cfg }
+}
+
+// WithRetryConfig enables automatic retries for provider calls.
+func WithRetryConfig(cfg *RetryConfig) Option {
+	return func(c *Config) { c.RetryConfig = cfg }
+}
+
+// WithCaptureContent enables capturing prompt/response content on spans with
+// optional PII redaction.
+func WithCaptureContent(cfg *CaptureConfig) Option {
+	return func(c *Config) { c.CaptureContent = cfg }
+}
+
+// WithTimeout bounds the traced LLM call with a deadline derived from the
+// caller's context. The provider call (and any retries/streaming) will fail
+// fast with a context deadline exceeded error once the timeout elapses, and the
+// span is still exported so the timeout is visible in traces.
+//
+// The caller's context is used as the parent, so spans keep their relationship
+// to the incoming request:
+//
+//	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+//	defer cancel()
+//	result, err := otellix.Trace(ctx, provider, params, otellix.WithTimeout(60*time.Second))
+func WithTimeout(timeout time.Duration) Option {
+	return func(c *Config) { c.Timeout = timeout }
 }
 
 // NewConfig creates a Config from functional options.

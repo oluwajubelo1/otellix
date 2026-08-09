@@ -40,6 +40,28 @@ type BudgetConfig struct {
 
 	// Store is the backing store for budget data. Default: in-memory.
 	Store BudgetStore
+
+	// Thresholds is a list of spend fractions (0..1) at which OnThreshold is
+	// fired (e.g. 0.5, 0.8). Each threshold fires once per user/project per
+	// budget window.
+	Thresholds []float64
+
+	// OnThreshold is called when spend crosses a configured threshold fraction
+	// of the limit. Nil disables threshold alerts.
+	OnThreshold func(ctx context.Context, event BudgetThresholdEvent)
+
+	// OnBlocked is called when a call is blocked by the budget. Nil disables.
+	OnBlocked func(ctx context.Context, err *BudgetExceededError)
+}
+
+// BudgetThresholdEvent describes a budget-threshold crossing.
+type BudgetThresholdEvent struct {
+	UserID    string
+	ProjectID string
+	Spend     float64
+	Limit     float64
+	Threshold float64 // fraction of the limit crossed (e.g. 0.8)
+	ResetAt   time.Time
 }
 
 // BudgetStore is the interface for pluggable budget storage backends.
@@ -151,6 +173,9 @@ func (s *InMemoryBudgetStore) GetResetTime(ctx context.Context, key string) time
 type BudgetEnforcer struct {
 	config *BudgetConfig
 	store  BudgetStore
+
+	mu       sync.Mutex
+	notified map[string]map[float64]bool // "user:x"/"project:x" -> threshold -> fired
 }
 
 // NewBudgetEnforcer creates a new enforcer. Uses InMemoryBudgetStore if config.Store is nil.
@@ -162,7 +187,45 @@ func NewBudgetEnforcer(config *BudgetConfig) *BudgetEnforcer {
 	if config.Store == nil {
 		config.Store = NewInMemoryBudgetStore(interval)
 	}
-	return &BudgetEnforcer{config: config, store: config.Store}
+	return &BudgetEnforcer{config: config, store: config.Store, notified: make(map[string]map[float64]bool)}
+}
+
+// NotifyBlocked fires the configured OnBlocked callback, if any.
+func (e *BudgetEnforcer) NotifyBlocked(ctx context.Context, err *BudgetExceededError) {
+	if e.config.OnBlocked != nil && err != nil {
+		e.config.OnBlocked(ctx, err)
+	}
+}
+
+// checkThresholds fires OnThreshold for any configured threshold crossed by the
+// current spend. Called after spend is recorded.
+func (e *BudgetEnforcer) checkThresholds(ctx context.Context, key, userID, projectID string, spend, limit float64) {
+	if e.config.OnThreshold == nil || limit <= 0 || len(e.config.Thresholds) == 0 {
+		return
+	}
+	util := spend / limit
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	fired := e.notified[key]
+	if fired == nil {
+		fired = make(map[float64]bool)
+		e.notified[key] = fired
+	}
+	for _, t := range e.config.Thresholds {
+		if util >= t && !fired[t] {
+			fired[t] = true
+			e.config.OnThreshold(ctx, BudgetThresholdEvent{
+				UserID:    userID,
+				ProjectID: projectID,
+				Spend:     spend,
+				Limit:     limit,
+				Threshold: t,
+				ResetAt:   e.store.GetResetTime(ctx, key),
+			})
+		}
+	}
 }
 
 // Check determines whether a call is allowed given current budget usage.
@@ -191,9 +254,15 @@ func (e *BudgetEnforcer) Check(ctx context.Context, userID, projectID string, es
 func (e *BudgetEnforcer) Record(ctx context.Context, userID, projectID string, actualCost float64) {
 	if userID != "" {
 		e.store.AddSpend(ctx, "user:"+userID, actualCost)
+		if e.config.PerUserDailyLimit > 0 {
+			e.checkThresholds(ctx, "user:"+userID, userID, projectID, e.store.GetSpend(ctx, "user:"+userID), e.config.PerUserDailyLimit)
+		}
 	}
 	if projectID != "" {
 		e.store.AddSpend(ctx, "project:"+projectID, actualCost)
+		if e.config.PerProjectDailyLimit > 0 {
+			e.checkThresholds(ctx, "project:"+projectID, userID, projectID, e.store.GetSpend(ctx, "project:"+projectID), e.config.PerProjectDailyLimit)
+		}
 	}
 }
 

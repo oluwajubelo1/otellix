@@ -17,6 +17,7 @@ import (
 type Stream struct {
 	base     providers.Stream
 	ctx      context.Context
+	callCtx  context.Context
 	span     trace.Span
 	cfg      *Config
 	enforcer *BudgetEnforcer
@@ -28,6 +29,11 @@ type Stream struct {
 	outputTokens int64
 	costUSD      float64
 	start        time.Time
+
+	// Streaming performance tracking
+	firstTokenAt time.Time
+	tokenCount   int64
+	maxTokens    int
 
 	closed bool
 }
@@ -45,6 +51,11 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 		cfg.Model = params.Model
 	}
 
+	// Wrap the provider with automatic retries if configured.
+	if cfg.RetryConfig != nil {
+		provider = RetryProvider(provider, cfg.RetryConfig)
+	}
+
 	var enforcer *BudgetEnforcer
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)
@@ -53,11 +64,18 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 		if !allowed {
 			switch action {
 			case FallbackBlock:
-				return nil, enforcer.BudgetError(cfg.UserID, cfg.ProjectID)
+				berr := enforcer.BudgetError(cfg.UserID, cfg.ProjectID)
+				enforcer.NotifyBlocked(ctx, berr)
+				return nil, berr
 			case FallbackDowngrade:
 				fallbackModel := cfg.BudgetConfig.FallbackModel
 				if fallbackModel == "" {
 					fallbackModel = cfg.FallbackModel
+				}
+				if fallbackModel == "" {
+					if routed, err := SelectCheapestModel(cfg.Provider, cfg.Model, 500, enforcer.Remaining(cfg.UserID, cfg.ProjectID), true); err == nil {
+						fallbackModel = routed
+					}
 				}
 				if fallbackModel != "" {
 					cfg.Model = fallbackModel
@@ -75,13 +93,8 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 	tracer := otel.Tracer(tracerName)
 	ctx, span := tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindClient))
 
-	span.SetAttributes(
-		attribute.String("llm.provider", cfg.Provider),
-		attribute.String("llm.model", cfg.Model),
-		attribute.String("llm.feature_id", cfg.FeatureID),
-		attribute.String("llm.user_id", cfg.UserID),
-		attribute.String("llm.project_id", cfg.ProjectID),
-	)
+	span.SetAttributes(baseSpanAttributes(cfg, genAIOpChat)...)
+	span.SetAttributes(requestAttributes(params)...)
 
 	for k, v := range cfg.Attributes {
 		span.SetAttributes(attribute.String(k, v))
@@ -93,7 +106,9 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 	}
 
 	start := time.Now()
-	baseStream, err := provider.Stream(ctx, params)
+	callCtx, cancel := callContext(ctx, cfg.Timeout)
+	defer cancel()
+	baseStream, err := provider.Stream(callCtx, params)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.Bool("llm.error", true))
@@ -102,19 +117,25 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 	}
 
 	return &Stream{
-		base:     baseStream,
-		ctx:      ctx,
-		span:     span,
-		cfg:      cfg,
-		enforcer: enforcer,
-		provider: cfg.Provider,
-		model:    cfg.Model,
-		start:    start,
+		base:      baseStream,
+		ctx:       ctx,
+		callCtx:   callCtx,
+		span:      span,
+		cfg:       cfg,
+		enforcer:  enforcer,
+		provider:  cfg.Provider,
+		model:     cfg.Model,
+		start:     start,
+		maxTokens: params.MaxTokens,
 	}, nil
 }
 
 // Recv returns the next token from the stream and updates budget/telemetry.
 func (s *Stream) Recv() (providers.StreamEvent, error) {
+	if err := s.callCtx.Err(); err != nil {
+		s.Close()
+		return providers.StreamEvent{}, err
+	}
 	evt, err := s.base.Recv()
 	if err != nil {
 		return evt, err
@@ -130,6 +151,14 @@ func (s *Stream) Recv() (providers.StreamEvent, error) {
 		// Naive estimate: 1 word token is roughly 1 output token, but let's just increment by 1
 		// Usually providers send final usage. So this acts as an estimate.
 		s.outputTokens++
+	}
+
+	// Track time-to-first-token and token throughput.
+	if evt.Token != "" {
+		if s.firstTokenAt.IsZero() {
+			s.firstTokenAt = time.Now()
+		}
+		s.tokenCount++
 	}
 
 	// Update cost progressively
@@ -162,13 +191,27 @@ func (s *Stream) Close() error {
 	err := s.base.Close()
 	latencyMs := float64(time.Since(s.start).Milliseconds())
 
-	// Finalize OTel Span
+	// Streaming performance metrics.
+	var ttftMs, tokensPerSec float64
+	if !s.firstTokenAt.IsZero() {
+		ttftMs = float64(s.firstTokenAt.Sub(s.start).Milliseconds())
+	}
+	if latencyMs > 0 && s.outputTokens > 0 {
+		tokensPerSec = float64(s.outputTokens) / (latencyMs / 1000.0)
+	}
+
+	result := providers.CallResult{
+		InputTokens:  s.inputTokens,
+		OutputTokens: s.outputTokens,
+	}
+
+	// Finalize OTel Span (dual llm.* / gen_ai.* emission).
 	s.span.SetStatus(codes.Ok, "")
+	s.span.SetAttributes(usageAttributes(&result, latencyMs, s.costUSD)...)
 	s.span.SetAttributes(
-		attribute.Int64("llm.input_tokens", s.inputTokens),
-		attribute.Int64("llm.output_tokens", s.outputTokens),
-		attribute.Float64("llm.latency_ms", latencyMs),
-		attribute.Float64("llm.cost_usd", s.costUSD),
+		attribute.Float64("llm.time_to_first_token_ms", ttftMs),
+		attribute.Float64("llm.tokens_per_second", tokensPerSec),
+		attribute.String(genAIResponseModel, s.model),
 	)
 
 	metricAttrs := metric.WithAttributes(
@@ -183,6 +226,14 @@ func (s *Stream) Close() error {
 	outputTokensCount.Add(s.ctx, s.outputTokens, metricAttrs)
 	costCounter.Add(s.ctx, s.costUSD, metricAttrs)
 	latencyHist.Record(s.ctx, latencyMs, metricAttrs)
+	if ttftMs > 0 {
+		ttftHist.Record(s.ctx, ttftMs, metricAttrs)
+	}
+	if tokensPerSec > 0 {
+		tokensPerSecHist.Record(s.ctx, tokensPerSec, metricAttrs)
+	}
+	recordContextUtilization(s.ctx, result, s.maxTokens, metricAttrs)
+	recordCacheRoi(s.ctx, s.provider, s.model, result, metricAttrs)
 
 	if s.enforcer != nil {
 		s.enforcer.Record(s.ctx, s.cfg.UserID, s.cfg.ProjectID, s.costUSD)

@@ -31,6 +31,11 @@ var (
 	errorsCount       metric.Int64Counter
 	cacheReadCount    metric.Int64Counter
 	cacheWriteCount   metric.Int64Counter
+	ttftHist          metric.Float64Histogram
+	tokensPerSecHist  metric.Float64Histogram
+	contextUtilHist   metric.Float64Histogram
+	cacheSavingsCount metric.Float64Counter
+	cacheHitRateHist  metric.Float64Histogram
 )
 
 // initMetrics creates OTel metric instruments. Safe to call multiple times.
@@ -66,7 +71,75 @@ func initMetrics() {
 			metric.WithDescription("Total tokens used to create/update cache"),
 			metric.WithUnit("{token}"),
 		)
+		ttftHist, _ = meter.Float64Histogram("otellix.llm.stream.time_to_first_token.ms",
+			metric.WithDescription("Time from stream start to first output token"),
+			metric.WithUnit("ms"),
+			metric.WithExplicitBucketBoundaries(10, 50, 100, 250, 500, 1000, 2000, 5000),
+		)
+		tokensPerSecHist, _ = meter.Float64Histogram("otellix.llm.stream.tokens_per_second",
+			metric.WithDescription("Output token generation rate during streaming"),
+			metric.WithUnit("{token}/s"),
+		)
+		contextUtilHist, _ = meter.Float64Histogram("otellix.llm.context_window.utilization",
+			metric.WithDescription("Fraction of the configured max context window consumed by a call"),
+			metric.WithUnit("1"),
+			metric.WithExplicitBucketBoundaries(0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1.0),
+		)
+		cacheSavingsCount, _ = meter.Float64Counter("otellix.llm.cache.savings.usd",
+			metric.WithDescription("Estimated USD saved from cache-read tokens (discounted vs full input price)"),
+			metric.WithUnit("USD"),
+		)
+		cacheHitRateHist, _ = meter.Float64Histogram("otellix.llm.cache.hit_rate",
+			metric.WithDescription("Fraction of input tokens served from cache per call"),
+			metric.WithUnit("1"),
+			metric.WithExplicitBucketBoundaries(0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1.0),
+		)
 	})
+}
+
+// recordContextUtilization records how much of the max context window a call used.
+func recordContextUtilization(ctx context.Context, result providers.CallResult, maxTokens int, metricAttrs metric.MeasurementOption) {
+	totalTokens := result.InputTokens + result.OutputTokens
+	window := int64(maxTokens)
+	if window <= 0 {
+		return
+	}
+	util := float64(totalTokens) / float64(window)
+	if util > 1 {
+		util = 1
+	}
+	contextUtilHist.Record(ctx, util, metricAttrs)
+}
+
+// recordCacheRoi records cache savings and hit rate for a call.
+func recordCacheRoi(ctx context.Context, provider, model string, result providers.CallResult, metricAttrs metric.MeasurementOption) {
+	if result.CacheReadTokens <= 0 {
+		cacheHitRateHist.Record(ctx, 0, metricAttrs)
+		return
+	}
+	// Savings = cache-read tokens priced at the full input rate instead of the
+	// discounted cache rate. GetPricing returns per-1M prices.
+	if entry, ok := GetPricing(provider, model); ok {
+		delta := entry.InputPricePerMToken - entry.CacheReadPricePerMToken
+		if delta > 0 {
+			savings := float64(result.CacheReadTokens) * delta / 1_000_000
+			cacheSavingsCount.Add(ctx, savings, metricAttrs)
+		}
+	}
+	totalInput := result.InputTokens + result.CacheReadTokens
+	if totalInput > 0 {
+		cacheHitRateHist.Record(ctx, float64(result.CacheReadTokens)/float64(totalInput), metricAttrs)
+	}
+}
+
+// callContext applies the configured timeout to ctx. It returns a derived
+// context that carries a deadline and a cancel func. When no timeout is set it
+// returns the original ctx and a no-op cancel.
+func callContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 // Trace executes an LLM call through the given provider, wrapping it with full
@@ -93,6 +166,11 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		cfg.Model = params.Model
 	}
 
+	// Wrap the provider with automatic retries if configured.
+	if cfg.RetryConfig != nil {
+		provider = RetryProvider(provider, cfg.RetryConfig)
+	}
+
 	// Automatic identity extraction from context (middleware support).
 	if cfg.UserID == "" {
 		cfg.UserID = UserFromContext(ctx)
@@ -110,11 +188,20 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		if !allowed {
 			switch action {
 			case FallbackBlock:
-				return providers.CallResult{}, enforcer.BudgetError(cfg.UserID, cfg.ProjectID)
+				berr := enforcer.BudgetError(cfg.UserID, cfg.ProjectID)
+				enforcer.NotifyBlocked(ctx, berr)
+				return providers.CallResult{}, berr
 			case FallbackDowngrade:
 				fallbackModel := cfg.BudgetConfig.FallbackModel
 				if fallbackModel == "" {
 					fallbackModel = cfg.FallbackModel
+				}
+				if fallbackModel == "" {
+					// Smart routing: pick the cheapest same-provider model that
+					// fits the remaining budget.
+					if routed, err := SelectCheapestModel(cfg.Provider, cfg.Model, 500, enforcer.Remaining(cfg.UserID, cfg.ProjectID), true); err == nil {
+						fallbackModel = routed
+					}
 				}
 				if fallbackModel != "" {
 					cfg.Model = fallbackModel
@@ -162,13 +249,8 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	ctx, span := tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 
-	span.SetAttributes(
-		attribute.String("llm.provider", cfg.Provider),
-		attribute.String("llm.model", cfg.Model),
-		attribute.String("llm.feature_id", cfg.FeatureID),
-		attribute.String("llm.user_id", cfg.UserID),
-		attribute.String("llm.project_id", cfg.ProjectID),
-	)
+	span.SetAttributes(baseSpanAttributes(cfg, genAIOpChat)...)
+	span.SetAttributes(requestAttributes(params)...)
 
 	for k, v := range cfg.Attributes {
 		span.SetAttributes(attribute.String(k, v))
@@ -179,8 +261,21 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		span.SetAttributes(attribute.String("llm.prompt_fingerprint", fingerprint))
 	}
 
+	if cfg.CaptureContent != nil && cfg.CaptureContent.CaptureInput {
+		cfg.CaptureContent.init()
+		cc := cfg.CaptureContent
+		if sys := cc.Redact(params.SystemPrompt); sys != "" {
+			span.SetAttributes(attribute.String("llm.prompt", sys))
+		}
+		if user := cc.Redact(lastUserMessage(params)); user != "" {
+			span.SetAttributes(attribute.String("gen_ai.content.user", user))
+		}
+	}
+
 	start := time.Now()
-	result, err := provider.Call(ctx, params)
+	callCtx, cancel := callContext(ctx, cfg.Timeout)
+	defer cancel()
+	result, err := provider.Call(callCtx, params)
 	latencyMs := float64(time.Since(start).Milliseconds())
 
 	// Metric labels shared by all instruments.
@@ -214,17 +309,15 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		return result, err
 	}
 
-	span.SetStatus(codes.Ok, "")
-	span.SetAttributes(
-		attribute.Int64("llm.input_tokens", result.InputTokens),
-		attribute.Int64("llm.output_tokens", result.OutputTokens),
-		attribute.Int64("llm.cache_read_tokens", result.CacheReadTokens),
-		attribute.Int64("llm.cache_write_tokens", result.CacheWriteTokens),
-		attribute.Float64("llm.latency_ms", latencyMs),
-	)
-
 	costUSD := CalculateCost(cfg.Provider, cfg.Model, result)
-	span.SetAttributes(attribute.Float64("llm.cost_usd", costUSD))
+	span.SetStatus(codes.Ok, "")
+	span.SetAttributes(usageAttributes(&result, latencyMs, costUSD)...)
+
+	if cfg.CaptureContent != nil && cfg.CaptureContent.CaptureOutput {
+		if text, ok := result.RawResponse.(string); ok && text != "" {
+			span.SetAttributes(attribute.String("llm.response", cfg.CaptureContent.Redact(text)))
+		}
+	}
 
 	inputTokensCount.Add(ctx, result.InputTokens, metricAttrs)
 	outputTokensCount.Add(ctx, result.OutputTokens, metricAttrs)
@@ -232,6 +325,8 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	cacheWriteCount.Add(ctx, result.CacheWriteTokens, metricAttrs)
 	costCounter.Add(ctx, costUSD, metricAttrs)
 	latencyHist.Record(ctx, latencyMs, metricAttrs)
+	recordContextUtilization(ctx, result, params.MaxTokens, metricAttrs)
+	recordCacheRoi(ctx, cfg.Provider, cfg.Model, result, metricAttrs)
 
 	// Hook 3: Cache result in dedup store + record to analytics tracker.
 	if cfg.CacheConfig != nil {

@@ -122,6 +122,12 @@ func (h *OtellixHandler) HandleLLMGenerateContentEnd(ctx context.Context, res *l
 	if projectID := otellix.ProjectFromContext(ctx); projectID != "" {
 		attrs = append(attrs, attribute.String("llm.project_id", projectID))
 	}
+	if agent := otellix.AgentFromContext(ctx); agent != "" {
+		attrs = append(attrs, attribute.String("llm.agent.name", agent))
+	}
+	if step := otellix.StepFromContext(ctx); step > 0 {
+		attrs = append(attrs, attribute.Int("llm.agent.step", step))
+	}
 	span.SetAttributes(attrs...)
 
 	span.AddEvent("llm.end")

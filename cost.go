@@ -167,6 +167,14 @@ var (
 
 		// --- Ollama (local, free) ---
 		"ollama/any": {InputPricePerMToken: 0, OutputPricePerMToken: 0, CacheReadPricePerMToken: 0, CacheWritePricePerMToken: 0},
+
+		// --- Embedding models ---
+		"openai/text-embedding-3-small":  {InputPricePerMToken: 0.02, OutputPricePerMToken: 0, CacheReadPricePerMToken: 0, CacheWritePricePerMToken: 0},
+		"openai/text-embedding-3-large":  {InputPricePerMToken: 0.13, OutputPricePerMToken: 0, CacheReadPricePerMToken: 0, CacheWritePricePerMToken: 0},
+		"openai/text-embedding-ada-002":  {InputPricePerMToken: 0.10, OutputPricePerMToken: 0, CacheReadPricePerMToken: 0, CacheWritePricePerMToken: 0},
+		"gemini/text-embedding-004":      {InputPricePerMToken: 0.10, OutputPricePerMToken: 0, CacheReadPricePerMToken: 0, CacheWritePricePerMToken: 0},
+		"cohere/embed-english-v3.0":      {InputPricePerMToken: 0.10, OutputPricePerMToken: 0, CacheReadPricePerMToken: 0, CacheWritePricePerMToken: 0},
+		"cohere/embed-multilingual-v3.0": {InputPricePerMToken: 0.10, OutputPricePerMToken: 0, CacheReadPricePerMToken: 0, CacheWritePricePerMToken: 0},
 	}
 )
 
@@ -204,6 +212,16 @@ func EstimateCost(provider, model string, estimatedOutputTokens int64) float64 {
 	}
 	// Rough estimate: assume input tokens ≈ output tokens for estimation.
 	return float64(estimatedOutputTokens) * (entry.InputPricePerMToken + entry.OutputPricePerMToken) / 1_000_000
+}
+
+// CalculateEmbeddingCost computes the USD cost for an embedding call, which is
+// billed purely on input tokens. Returns 0 for unknown provider/model pairs.
+func CalculateEmbeddingCost(provider, model string, inputTokens int64) float64 {
+	entry, ok := GetPricing(provider, model)
+	if !ok {
+		return 0
+	}
+	return float64(inputTokens) * entry.InputPricePerMToken / 1_000_000
 }
 
 // GetPricing returns the pricing entry for a specific provider/model combination.

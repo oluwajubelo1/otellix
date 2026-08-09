@@ -26,11 +26,22 @@ Most LLM observability tools tell you what you spent *after* the money is gone. 
 ## ⚡ Key Features
 
 - **⛓️ LangChainGo Integration**: Drop-in `callbacks.Handler` for LangChainGo. Automatic token, cost, and span capture for chains.
+- **🤖 LangGraph Integration**: Agent/step-aware telemetry for LangGraph-style workloads via `integrations/langgraph`.
 - **🔌 Zero-Config Attribution**: Automatically capture `user_id` and `project_id` from Gin/Echo middleware. No more manual context plumbing.
-- **🗄️ Redis Budget Store**: Distributed budget enforcement for high-availability production clusters.
+- **🗄️ Redis & SQLite Budget Stores**: Distributed enforcement for HA clusters, or a dependency-free persistent store for single-node services.
+- **🔁 Rate-Limit Aware Retries**: `RetryProvider` automatically retries on 429s with exponential backoff — perfect for aggressive prompt loops.
+- **🕸️ Smart Cost Routing**: `SelectCheapestModel` picks the cheapest model that fits your latency + quality budget.
+- **🧮 Embeddings Support**: `TraceEmbedding` + `CalculateEmbeddingCost` for vector pipelines.
+- **🔒 PII Redaction**: Capture prompt/response content while auto-redacting emails, card numbers, and custom patterns.
+- **⏰ Budget Threshold Alerts**: `OnThreshold` callback fires at spend milestones (e.g. 50%, 80%, 90%) before you hit the ceiling.
+- **📦 Live Price Sync**: `SyncPricing` / `SyncPricingFromJSON` hot-reload pricing from a config file or hosted feed.
+- **🧪 Zero-Dependency Test Harness**: `otellix/test` captures spans in-process — assert attributes without standing up a collector.
+- **🔭 Full OTel GenAI Semantics**: Dual `gen_ai.*` + `llm.*` span attributes (GenAI semantic convention compliant).
+- **🪵 Structured Logging Bridge**: `slogbridge` injects trace_id/span_id + user/project attribution into `log/slog` output.
 - **🚀 Go-Native & High-Performance**: Built for Go 1.22+ using native streaming and OpenTelemetry. 
 - **📊 Standard-Compliant (OTel)**: 100% OTel compliant. Works with Jaeger, Honeycomb, Prometheus, and Grafana.
 - **💎 Prompt Caching ROI**: Track exactly how much you save with Anthropic/OpenAI prompt caching.
+- **📐 Context Window Utilization**: See how close each call gets to the model's context limit, plus streaming TTFT & tokens/sec.
 
 ---
 
@@ -104,6 +115,38 @@ defer shutdown()
 - **`SetupDevConsole()`** prints only the one-line `[otellix]` summary per call and leaves your existing `TracerProvider` untouched — ideal for demos and presentations.
 - `RegisterDevPrinter()` enables just the summary printer when you already have your own `TracerProvider` configured.
 
+### 5. Production Telemetry (OTLP)
+
+`SetupDev()` writes every span's full JSON to stdout — noisy for production. Use
+`SetupOTLP()` to ship spans to a real collector (Jaeger, Tempo, Honeycomb,
+SigNoz, an OTel Collector, ...):
+
+```go
+shutdown := otellix.SetupOTLP("otel-collector:4318", otellix.WithServiceName("my-api"))
+defer shutdown()
+```
+
+- `SetupOTLP(endpoint, opts...)` sends spans over OTLP/HTTP (default endpoint
+  `localhost:4318` if empty) with batching.
+- `WithServiceName(name)` sets the `service.name` resource. Without it the OTel
+  SDK reports `unknown_service:<binary>`, making traces hard to identify — set
+  it on all setup functions (`SetupDev`, `SetupDevConsole`, `SetupOTLP`).
+- For Prometheus metrics, use `exporters.NewPrometheusExporter()` as before.
+
+### 6. Call Timeouts
+
+`WithTimeout` bounds the entire traced call (provider call + retries + streaming)
+with a deadline derived from your request context, so spans keep their parent:
+
+```go
+result, err := otellix.Trace(r.Context(), provider, params,
+    otellix.WithTimeout(60*time.Second),
+)
+```
+
+If the deadline elapses the call fails fast with `context.DeadlineExceeded` and
+the span is still exported with an error status, so timeouts show up in traces.
+
 ---
 
 ## 📊 Standardized OTel Attributes
@@ -134,10 +177,13 @@ Otellix populates your spans with industry-standard attributes:
 
 ## 📖 Deep Dives
 *   [**Architecture**](docs/architecture.md) — How Otellix fits into the OTel ecosystem.
-*   [**Budget Guardrails**](docs/budget-guardrails.md) — Redis & InMemory stores.
-*   [**Integrations**](docs/integrations.md) — LangChainGo setup.
+*   [**Budget Guardrails**](docs/budget-guardrails.md) — Redis & SQLite stores, threshold alerts.
+*   [**Integrations**](docs/integrations.md) — LangChainGo, LangGraph, nethttp, slogbridge.
 *   [**Middleware & Identity**](docs/middleware.md) — Zero-config attribution.
 *   [**Prompt Caching**](docs/caching.md) — ROI analysis and tracking.
+*   [**Reliability**](docs/reliability.md) — Retries, smart routing, live price sync.
+*   [**Content Capture**](docs/redaction.md) — PII-safe prompt/response capture.
+*   [**GenAI Semantics**](docs/genai-semantics.md) — `gen_ai.*` + `llm.*` span attributes.
 
 ---
 
