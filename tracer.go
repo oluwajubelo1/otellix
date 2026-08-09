@@ -72,6 +72,16 @@ func initMetrics() {
 // Trace executes an LLM call through the given provider, wrapping it with full
 // OpenTelemetry tracing, cost attribution, and optional budget enforcement.
 //
+// callContext applies the configured timeout to ctx. It returns a derived
+// context that carries a deadline and a cancel func. When no timeout is set it
+// returns the original ctx and a no-op cancel.
+func callContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
 // Usage:
 //
 //	result, err := otellix.Trace(ctx, provider, params,
@@ -180,7 +190,9 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	}
 
 	start := time.Now()
-	result, err := provider.Call(ctx, params)
+	callCtx, cancel := callContext(ctx, cfg.Timeout)
+	defer cancel()
+	result, err := provider.Call(callCtx, params)
 	latencyMs := float64(time.Since(start).Milliseconds())
 
 	// Metric labels shared by all instruments.

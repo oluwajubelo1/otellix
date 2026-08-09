@@ -17,6 +17,7 @@ import (
 type Stream struct {
 	base     providers.Stream
 	ctx      context.Context
+	callCtx  context.Context
 	span     trace.Span
 	cfg      *Config
 	enforcer *BudgetEnforcer
@@ -93,7 +94,9 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 	}
 
 	start := time.Now()
-	baseStream, err := provider.Stream(ctx, params)
+	callCtx, cancel := callContext(ctx, cfg.Timeout)
+	defer cancel()
+	baseStream, err := provider.Stream(callCtx, params)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.Bool("llm.error", true))
@@ -104,6 +107,7 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 	return &Stream{
 		base:     baseStream,
 		ctx:      ctx,
+		callCtx:  callCtx,
 		span:     span,
 		cfg:      cfg,
 		enforcer: enforcer,
@@ -115,6 +119,10 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 
 // Recv returns the next token from the stream and updates budget/telemetry.
 func (s *Stream) Recv() (providers.StreamEvent, error) {
+	if err := s.callCtx.Err(); err != nil {
+		s.Close()
+		return providers.StreamEvent{}, err
+	}
 	evt, err := s.base.Recv()
 	if err != nil {
 		return evt, err

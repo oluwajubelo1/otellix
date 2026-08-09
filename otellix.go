@@ -33,9 +33,11 @@ var devPrinter func(cfg *Config, result *providers.CallResult, costUSD, latencyM
 //
 // Usage:
 //
-//	shutdown := otellix.SetupDev()
+//	shutdown := otellix.SetupDev(otellix.WithServiceName("my-api"))
 //	defer shutdown()
-func SetupDev() func() {
+func SetupDev(opts ...SetupOption) func() {
+	sc := newSetupConfig(opts...)
+
 	// Set up stdout OTel trace exporter.
 	exporter, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
 	if err != nil {
@@ -44,6 +46,7 @@ func SetupDev() func() {
 
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(serviceResource(sc)),
 	)
 	otel.SetTracerProvider(tp)
 
@@ -68,7 +71,7 @@ func SetupDev() func() {
 //
 //	shutdown := otellix.SetupDevConsole()
 //	defer shutdown()
-func SetupDevConsole() func() {
+func SetupDevConsole(opts ...SetupOption) func() {
 	RegisterDevPrinter()
 	return func() {}
 }

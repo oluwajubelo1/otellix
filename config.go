@@ -1,7 +1,10 @@
 // Package otellix provides OpenTelemetry-native LLM observability for Go.
 package otellix
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // contextKey is a private type to avoid collisions in context.Context.
 type contextKey string
@@ -80,6 +83,11 @@ type Config struct {
 
 	// AnomalyConfig holds cost anomaly detection configuration. Nil means no anomaly detection.
 	AnomalyConfig *AnomalyConfig
+
+	// Timeout bounds the entire traced LLM call (including retries and streaming).
+	// If set, a deadline is derived from the caller's context before the provider
+	// is invoked. Zero means no timeout — the caller owns cancellation.
+	Timeout time.Duration
 }
 
 // Option is a functional option for configuring a traced LLM call.
@@ -151,6 +159,19 @@ func WithRequestCache(cfg *CacheConfig) Option {
 // WithAnomalyDetection enables cost anomaly detection with the given configuration.
 func WithAnomalyDetection(cfg *AnomalyConfig) Option {
 	return func(c *Config) { c.AnomalyConfig = cfg }
+}
+
+// WithTimeout bounds the traced LLM call with a deadline derived from the
+// caller's context. The provider call (and any retries/streaming) will fail
+// fast with a context deadline exceeded error once the timeout elapses, and the
+// span is still exported so the timeout is visible in traces.
+//
+// The caller's context is used as the parent, so spans keep their relationship
+// to the incoming request:
+//
+//	result, err := otellix.Trace(r.Context(), provider, params, otellix.WithTimeout(60*time.Second))
+func WithTimeout(timeout time.Duration) Option {
+	return func(c *Config) { c.Timeout = timeout }
 }
 
 // NewConfig creates a Config from functional options.
