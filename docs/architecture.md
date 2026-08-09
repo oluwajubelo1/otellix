@@ -43,3 +43,14 @@ Otellix maps all provider-specific terminology into a single, standardized set o
 ## Observability Stack
 
 Otellix is designed to be **backend-agnostic**. As long as you have an OpenTelemetry collector or exporter configured (e.g., OTLP), Otellix will ship metrics and traces to your preferred dashboard.
+
+### Local Development Modes
+
+Two dev helpers make traces visible without a backend:
+
+| Mode | Output | When to use |
+| --- | --- | --- |
+| `SetupDev()` | Human-readable `[otellix]` summary **and** raw OTel span JSON (stdout exporter) | Inspecting the exact span payload |
+| `SetupDevConsole()` | Human-readable `[otellix]` summary only; leaves the global `TracerProvider` untouched | Demos, presentations, clean terminals |
+
+Both return a `shutdown()` func to call via `defer`. `RegisterDevPrinter()` enables just the summary printer when you already have a `TracerProvider` configured.

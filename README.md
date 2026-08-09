@@ -89,6 +89,21 @@ r := gin.Default()
 r.Use(otellixmw.GinMiddleware()) // Automatically populates context with User/Project IDs
 ```
 
+### 4. Local Development
+Two dev modes help you see traces while building:
+
+```go
+shutdown := otellix.SetupDev()        // (1) Pretty summary + raw OTel span JSON
+defer shutdown()
+
+shutdown := otellix.SetupDevConsole() // (2) Pretty summary only — clean terminal
+defer shutdown()
+```
+
+- **`SetupDev()`** configures an OpenTelemetry stdout trace exporter (human-readable summary **and** the raw span JSON) — best for inspecting the exact span payload.
+- **`SetupDevConsole()`** prints only the one-line `[otellix]` summary per call and leaves your existing `TracerProvider` untouched — ideal for demos and presentations.
+- `RegisterDevPrinter()` enables just the summary printer when you already have your own `TracerProvider` configured.
+
 ---
 
 ## 📊 Standardized OTel Attributes

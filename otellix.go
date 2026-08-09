@@ -55,6 +55,24 @@ func SetupDev() func() {
 	}
 }
 
+// SetupDevConsole initialises Otellix for local development with only the
+// human-readable stdout dev printer. Unlike SetupDev, it does NOT configure
+// an OpenTelemetry stdout trace exporter, so raw span JSON is never printed.
+// This keeps the terminal clean during demos and presentations while still
+// showing a one-line summary per LLM call.
+//
+// It leaves the global TracerProvider untouched, so spans still flow to your
+// configured exporter (or a no-op provider if none is set).
+//
+// Usage:
+//
+//	shutdown := otellix.SetupDevConsole()
+//	defer shutdown()
+func SetupDevConsole() func() {
+	RegisterDevPrinter()
+	return func() {}
+}
+
 // RegisterDevPrinter enables the human-readable stdout printer without
 // setting up an OTel trace exporter. Useful when you already have your
 // own TracerProvider configured.
