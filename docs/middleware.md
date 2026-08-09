@@ -4,21 +4,21 @@ Tracking costs is only useful if you know **who** is spending the money. Otellix
 
 ## Gin Middleware
 
-The Gin middleware looks for standard headers and populates the `context.Context` with `user_id` and `project_id`.
+The Gin middleware extracts `user_id` from the `Authorization: Bearer <jwt>` header (JWT `sub` claim by default) and `project_id` from the `X-Project-ID` header, then populates the `context.Context` so downstream `otellix.Trace()` calls pick them up automatically.
 
 ### Setup
 
 ```go
 import (
     "github.com/gin-gonic/gin"
-    otellixgin "github.com/oluwajubelo1/otellix/middleware/gin"
+    otellixmw "github.com/oluwajubelo1/otellix/middleware"
 )
 
 func main() {
     r := gin.Default()
-    
+
     // Global middleware
-    r.Use(otellixgin.Middleware())
+    r.Use(otellixmw.GinMiddleware())
 
     r.POST("/generate", func(c *gin.Context) {
         // Otellix automatically finds the user from the context!
@@ -29,16 +29,18 @@ func main() {
 
 ### Configuration
 By default, the middleware looks for:
-- `X-User-ID`
-- `X-Project-ID`
+- `user_id` — from the JWT `sub` claim in the `Authorization: Bearer ...` header
+- `project_id` — from the `X-Project-ID` header
 
 You can customize this behavior:
 ```go
-r.Use(otellixgin.Middleware(
-    otellixgin.WithUserHeader("X-Custom-User"),
-    otellixgin.WithProjectHeader("X-Custom-Project"),
+r.Use(otellixmw.GinMiddleware(
+    otellixmw.WithJWTClaim("user_id"),
+    otellixmw.WithProjectHeader("X-Tenant-ID"),
 ))
 ```
+
+> Note: JWT parsing is **unverified** — the middleware only extracts the claim. Authentication is the responsibility of your application's auth middleware.
 
 ## Echo Middleware
 
@@ -47,11 +49,11 @@ Similarly, for the Echo framework:
 ```go
 import (
     "github.com/labstack/echo/v4"
-    otellixecho "github.com/oluwajubelo1/otellix/middleware/echo"
+    otellixmw "github.com/oluwajubelo1/otellix/middleware"
 )
 
 e := echo.New()
-e.Use(otellixecho.Middleware())
+e.Use(otellixmw.EchoMiddleware())
 ```
 
 ## Why use Middleware?

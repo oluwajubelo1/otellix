@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/oluwajubelo1/otellix/providers"
@@ -166,7 +167,7 @@ func (s *openaiStream) Recv() (providers.StreamEvent, error) {
 		if err := s.stream.Err(); err != nil {
 			return providers.StreamEvent{}, classifyError(s.model, err)
 		}
-		return providers.StreamEvent{}, fmt.Errorf("stream closed")
+		return providers.StreamEvent{}, io.EOF
 	}
 
 	chunk := s.stream.Current()

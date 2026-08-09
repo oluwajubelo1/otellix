@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Otellix | Interactive Demo</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0d1117;
+            --card-bg: rgba(22, 27, 34, 0.8);
+            --accent: #58a6ff;
+            --success: #3fb950;
+            --warning: #d29922;
+            --error: #f85149;
+            --text: #c9d1d9;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        header {
+            padding: 1rem 2rem;
+            background: rgba(13, 17, 23, 0.95);
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .logo {
+            font-weight: 700;
+            font-size: 1.5rem;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .logo span {
+            color: var(--accent);
+        }
+
+        .badge {
+            background: rgba(63, 185, 80, 0.1);
+            color: var(--success);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            border: 1px solid var(--success);
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .badge::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(63, 185, 80, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(63, 185, 80, 0); }
+        }
+
+        main {
+            flex: 1;
+            position: relative;
+            background: url('../../assets/demo_dashboard.png') no-repeat center center;
+            background-size: contain;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .overlay-card {
+            position: absolute;
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid #30363d;
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            transition: transform 0.3s ease;
+            cursor: pointer;
+        }
+
+        .overlay-card:hover {
+            transform: translateY(-5px);
+            border-color: var(--accent);
+        }
+
+        .cost-card {
+            top: 20%;
+            left: 10%;
+        }
+
+        .cost-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 2rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .label {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #8b949e;
+            margin-bottom: 0.5rem;
+        }
+
+        .cta-bar {
+            position: absolute;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 1rem;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: #238636;
+            color: #fff;
+            border: 1px solid rgba(240,246,252,0.1);
+        }
+
+        .btn-primary:hover {
+            background: #2ea043;
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: var(--accent);
+            border: 1px solid #30363d;
+        }
+
+        .btn-outline:hover {
+            background: rgba(48, 54, 61, 0.5);
+            border-color: #8b949e;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: var(--bg);
+            border: 1px solid #30363d;
+            padding: 2rem;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+        }
+
+        pre {
+            background: #010409;
+            padding: 1rem;
+            border-radius: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            margin-top: 1rem;
+            color: var(--accent);
+            border: 1px solid #30363d;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">Otellix<span>.</span></div>
+        <div class="badge">Live Performance Simulation</div>
+    </header>
+
+    <main>
+        <!-- Overlay for interactive feel -->
+        <div class="overlay-card cost-card">
+            <div class="label">Total Spend (Live)</div>
+            <div class="cost-value">$<span id="cost-counter">124.50</span></div>
+            <div style="color: var(--success); font-size: 0.8rem; margin-top: 0.5rem;">↑ 3.2% from last hour</div>
+        </div>
+
+        <div class="cta-bar">
+            <div class="btn btn-primary" onclick="showModal('run-locally')">Run Locally</div>
+            <a href="https://github.com/oluwajubelo1/otellix" class="btn btn-outline" target="_blank">View on GitHub</a>
+        </div>
+    </main>
+
+    <div id="modal" class="modal" onclick="closeModal()">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h2>Run Otellix Locally</h2>
+            <p style="margin-top: 1rem; color: #8b949e;">Copy and paste this command into your terminal to spin up the full demo stack (requires Docker):</p>
+            <pre>curl -sL https://raw.githubusercontent.com/oluwajubelo1/otellix/main/scripts/demo.sh | bash</pre>
+            <div style="margin-top: 2rem; display: flex; justify-content: flex-end;">
+                <button class="btn btn-outline" onclick="closeModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Simulate live data updates
+        const costEl = document.getElementById('cost-counter');
+        let currentCost = 124.50;
+
+        setInterval(() => {
+            currentCost += (Math.random() * 0.05);
+            costEl.innerText = currentCost.toFixed(2);
+        }, 3000);
+
+        function showModal(id) {
+            document.getElementById('modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('modal').style.display = 'none';
+        }
+    </script>
+</body>
+</html>

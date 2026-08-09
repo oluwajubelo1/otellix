@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"net/http"
 
@@ -175,7 +176,7 @@ type geminiStream struct {
 func (s *geminiStream) Recv() (providers.StreamEvent, error) {
 	resp, err, ok := s.next()
 	if !ok {
-		return providers.StreamEvent{}, fmt.Errorf("stream closed")
+		return providers.StreamEvent{}, io.EOF
 	}
 	if err != nil {
 		return providers.StreamEvent{}, classifyError(s.model, err)

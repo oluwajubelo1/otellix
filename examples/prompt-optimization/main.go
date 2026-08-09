@@ -34,11 +34,22 @@ func main() {
 	}
 
 	// 3. Setup Provider.
+	// If ANTHROPIC_API_KEY is set, use the real Anthropic provider.
+	// Otherwise fall back to a mock provider so the demo runs anywhere.
+	var p providers.Provider
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		log.Println("ANTHROPIC_API_KEY not set, using mock provider")
+	if apiKey != "" {
+		p = anthropic.New()
+	} else {
+		fmt.Println("ANTHROPIC_API_KEY not set — using mock provider")
+		p = &providers.MockProvider{
+			ProviderName: "anthropic",
+			Result: providers.CallResult{
+				InputTokens: 100, OutputTokens: 50,
+				CacheReadTokens: 20, Model: "claude-3-5-sonnet-20240620",
+			},
+		}
 	}
-	p := anthropic.New() // Reads from ANTHROPIC_API_KEY
 
 	// 4. Trace the call.
 	ctx := context.Background()
@@ -60,8 +71,15 @@ func main() {
 		log.Fatalf("Trace failed: %v", err)
 	}
 
-	fmt.Printf("Response: %s\n", res.RawResponse)
-	fmt.Printf("Final System Prompt used: %s\n", params.SystemPrompt)
+	fmt.Printf("Tokens: %d in, %d out\n", res.InputTokens, res.OutputTokens)
+
+	// Show what the provider actually received (decorator mutations are applied
+	// inside Trace to the call params).
+	if mock, ok := p.(*providers.MockProvider); ok {
+		fmt.Printf("Prompt received by provider: %s\n", mock.LastParams.SystemPrompt)
+	} else {
+		fmt.Printf("Decorated System Prompt used: %s\n", params.SystemPrompt)
+	}
 
 	status := enforcer.Status(ctx, "user_456", "")
 	fmt.Printf("Final Budget Remaining: $%.4f\n", status.Remaining)

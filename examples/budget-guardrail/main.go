@@ -6,6 +6,9 @@
 // Run with:
 //
 //	ANTHROPIC_API_KEY=xxx go run examples/budget-guardrail/main.go
+//
+// If ANTHROPIC_API_KEY is not set, a mock provider with large token counts is
+// used so the budget ceiling is hit within the 5 calls (no network needed).
 package main
 
 import (
@@ -13,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/oluwajubelo1/otellix"
@@ -24,7 +28,18 @@ func main() {
 	shutdown := otellix.SetupDev()
 	defer shutdown()
 
-	provider := anthropic.New()
+	var provider providers.Provider
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		provider = anthropic.New()
+	} else {
+		fmt.Println("ANTHROPIC_API_KEY not set — using mock provider (large token counts to trigger the budget)")
+		provider = &providers.MockProvider{
+			ProviderName: "anthropic",
+			Result: providers.CallResult{
+				InputTokens: 1000, OutputTokens: 4000, Model: "claude-sonnet-4-6",
+			},
+		}
+	}
 
 	budgetCfg := &otellix.BudgetConfig{
 		PerUserDailyLimit:    0.05,

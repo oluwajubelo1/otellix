@@ -72,11 +72,13 @@ res, err := p.GenerateContent(ctx, parts)
 ```
 
 ### 3. Middleware Attribution
-Stop manually passing IDs. Use our middleware to discover identity from headers/sessions.
+Stop manually passing IDs. Use our middleware to discover identity from headers/JWTs.
 
 ```go
+import otellixmw "github.com/oluwajubelo1/otellix/middleware"
+
 r := gin.Default()
-r.Use(otellixgin.Middleware()) // Automatically populates context with User/Project IDs
+r.Use(otellixmw.GinMiddleware()) // Automatically populates context with User/Project IDs
 ```
 
 ---
@@ -87,9 +89,10 @@ Otellix populates your spans with industry-standard attributes:
 | Attribute | Description |
 |---|---|
 | `llm.provider` | The LLM provider (OpenAI, Anthropic, etc.) |
-| `llm.usage.cache_read_tokens` | Tokens served from provider cache (Savings!) |
+| `llm.model` | The model used (e.g. `claude-sonnet-4-6`) |
+| `llm.input_tokens` / `llm.output_tokens` | Token usage for the call |
+| `llm.cache_read_tokens` | Tokens served from provider cache (Savings!) |
 | `llm.cost_usd` | Real-time USD cost of the call |
-| `llm.budget.blocked` | Flag if the call was blocked by guardrails |
 
 ---
 

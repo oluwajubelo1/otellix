@@ -134,6 +134,37 @@ func TestBudgetFallbackDowngrade(t *testing.T) {
 		providers.CallParams{Model: "claude-sonnet-4-6"},
 		otellix.WithProvider("anthropic"),
 		otellix.WithUserID("user_downgrade"),
+		otellix.WithBudgetConfig(cfg),
+	)
+	if err != nil {
+		t.Fatalf("downgrade should not error: %v", err)
+	}
+
+	// The mock should have been called with the downgraded model from
+	// BudgetConfig.FallbackModel (no separate WithFallbackModel option needed).
+	if mock.LastParams.Model != "claude-haiku-4-5" {
+		t.Errorf("expected model to be downgraded to claude-haiku-4-5, got %s", mock.LastParams.Model)
+	}
+}
+
+func TestBudgetFallbackDowngradeWithOption(t *testing.T) {
+	store := otellix.NewInMemoryBudgetStore(24 * time.Hour)
+	store.AddSpend(context.Background(), "user:user_downgrade_opt", 0.06)
+
+	cfg := &otellix.BudgetConfig{
+		PerUserDailyLimit: 0.05,
+		FallbackAction:    otellix.FallbackDowngrade,
+		Store:             store,
+	}
+
+	mock := &providers.MockProvider{
+		Result: providers.CallResult{InputTokens: 100, OutputTokens: 50},
+	}
+
+	_, err := otellix.Trace(context.Background(), mock,
+		providers.CallParams{Model: "claude-sonnet-4-6"},
+		otellix.WithProvider("anthropic"),
+		otellix.WithUserID("user_downgrade_opt"),
 		otellix.WithFallbackModel("claude-haiku-4-5"),
 		otellix.WithBudgetConfig(cfg),
 	)
@@ -141,9 +172,8 @@ func TestBudgetFallbackDowngrade(t *testing.T) {
 		t.Fatalf("downgrade should not error: %v", err)
 	}
 
-	// The mock should have been called with the downgraded model.
 	if mock.LastParams.Model != "claude-haiku-4-5" {
-		t.Errorf("expected model to be downgraded to claude-haiku-4-5, got %s", mock.LastParams.Model)
+		t.Errorf("expected model to be downgraded via WithFallbackModel to claude-haiku-4-5, got %s", mock.LastParams.Model)
 	}
 }
 

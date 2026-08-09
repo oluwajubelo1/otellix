@@ -52,7 +52,7 @@ func defaultDevPrinter(cfg *Config, result *providers.CallResult, costUSD, laten
 			} else {
 				fmt.Printf("          ")
 			}
-			fmt.Printf("budget: $%.3f/$%.3f (%.0f%%)", spent, limit, pct)
+			fmt.Printf("budget: $%.4f/$%.4f (%.0f%%)", spent, limit, pct)
 			hasLine3 = true
 		}
 	}

@@ -55,9 +55,13 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 			case FallbackBlock:
 				return nil, enforcer.BudgetError(cfg.UserID, cfg.ProjectID)
 			case FallbackDowngrade:
-				if cfg.FallbackModel != "" {
-					cfg.Model = cfg.FallbackModel
-					params.Model = cfg.FallbackModel
+				fallbackModel := cfg.BudgetConfig.FallbackModel
+				if fallbackModel == "" {
+					fallbackModel = cfg.FallbackModel
+				}
+				if fallbackModel != "" {
+					cfg.Model = fallbackModel
+					params.Model = fallbackModel
 				}
 			}
 		}

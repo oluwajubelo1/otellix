@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/oluwajubelo1/otellix"
@@ -44,8 +45,20 @@ func main() {
 		Store:             store,
 	}
 
-	// 5. Normal Tracer with OpenAI provider.
-	provider := openai.New()
+	// 5. Provider — use the real OpenAI provider if a key is set,
+	// otherwise fall back to a mock so the demo runs without network access.
+	var provider providers.Provider
+	if os.Getenv("OPENAI_API_KEY") != "" {
+		provider = openai.New()
+	} else {
+		fmt.Println("OPENAI_API_KEY not set — using mock provider (large token counts to trigger the budget)")
+		provider = &providers.MockProvider{
+			ProviderName: "openai",
+			Result: providers.CallResult{
+				InputTokens: 2000, OutputTokens: 2000, Model: "gpt-4o",
+			},
+		}
+	}
 
 	for i := 1; i <= 10; i++ {
 		fmt.Printf("\n--- Call #%d ---\n", i)

@@ -23,13 +23,16 @@ Where usage metrics are persisted.
 - **`RedisBudgetStore`**: Required for distributed production environments to ensure consistent budget enforcement across multiple app instances.
 
 ```go
-import "github.com/oluwajubelo1/otellix/stores/redis"
+import (
+    "github.com/redis/go-redis/v9"
+    otellixredis "github.com/oluwajubelo1/otellix/stores/redis"
+)
 
-store := redis.NewBudgetStore(redis.Config{
-    Addr:     "localhost:6379",
-    Password: "your-password",
-    DB:       0,
-})
+// Initialise a go-redis client (see docker-compose.dev.yml for local Redis).
+rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+
+// The RedisBudgetStore can be shared across multiple application instances.
+store := otellixredis.NewRedisBudgetStore(rdb, "otellix:budget", 24*time.Hour)
 
 config := &otellix.BudgetConfig{
     Store: store,

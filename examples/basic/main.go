@@ -3,12 +3,16 @@
 // Run with:
 //
 //	ANTHROPIC_API_KEY=xxx go run examples/basic/main.go
+//
+// If ANTHROPIC_API_KEY is not set, a mock provider is used so the example
+// runs anywhere without network access.
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/oluwajubelo1/otellix"
 	"github.com/oluwajubelo1/otellix/providers"
@@ -19,7 +23,19 @@ func main() {
 	shutdown := otellix.SetupDev()
 	defer shutdown()
 
-	provider := anthropic.New()
+	var provider providers.Provider
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		provider = anthropic.New()
+	} else {
+		fmt.Println("ANTHROPIC_API_KEY not set — using mock provider")
+		provider = &providers.MockProvider{
+			ProviderName: "anthropic",
+			Result: providers.CallResult{
+				InputTokens: 50, OutputTokens: 120,
+				CacheReadTokens: 10, Model: "claude-sonnet-4-6",
+			},
+		}
+	}
 
 	result, err := otellix.Trace(
 		context.Background(),

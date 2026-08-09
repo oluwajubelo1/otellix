@@ -10,12 +10,13 @@ The following attributes are automatically added to your OTel spans:
 
 | Attribute | Description |
 | --- | --- |
-| `llm.usage.cache_read_tokens` | Tokens served from the provider-side cache. |
-| `llm.usage.cache_write_tokens` | Tokens written to the cache (usually priced at full rate). |
-| `llm.savings_usd` | The estimated USD saved by using cached tokens instead of full-price input tokens. |
+| `llm.cache_read_tokens` | Tokens served from the provider-side cache. |
+| `llm.cache_write_tokens` | Tokens written to the cache (usually priced at full rate). |
+
+Both are factored into `llm.cost_usd`, which uses the provider's discounted cache-read price per token, so your spans reflect the real (lower) cost of cached calls.
 
 ## Why it matters
-By tracking `llm.savings_usd`, you can:
+By tracking `llm.cache_read_tokens` and the discounted cost in `llm.cost_usd`, you can:
 1.  **Calculate ROI**: See the direct financial benefit of your prompt engineering efforts.
 2.  **Optimize Cache TTLs**: Identify which prompts are frequently hit and which are rarely reused.
 3.  **Budgeting**: Realize that your actual spend is lower than "worst-case" scenarios, allowing for more aggressive usage.
@@ -32,7 +33,6 @@ OpenAI provides "Cached Tokens" in their usage block. Otellix maps these to the 
 
 ## Example Trace Analysis
 When viewing an Otellix trace in Tempo or Jaeger, you'll see:
-- `llm.usage.input_tokens`: 500
-- `llm.usage.cache_read_tokens`: 450
-- `llm.cost_usd`: $0.0005 (Discounted)
-- `llm.savings_usd`: $0.0045 (Calculated ROI)
+- `llm.input_tokens`: 500
+- `llm.cache_read_tokens`: 450
+- `llm.cost_usd`: $0.0005 (Discounted — cache-read tokens billed at the reduced cache price)

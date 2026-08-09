@@ -1,3 +1,6 @@
 PLAN.md
 CLAUDE.md
 .env
+coverage.out
+/gin-middleware
+/langchaingo-basic

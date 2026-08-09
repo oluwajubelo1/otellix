@@ -112,9 +112,13 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 			case FallbackBlock:
 				return providers.CallResult{}, enforcer.BudgetError(cfg.UserID, cfg.ProjectID)
 			case FallbackDowngrade:
-				if cfg.FallbackModel != "" {
-					cfg.Model = cfg.FallbackModel
-					params.Model = cfg.FallbackModel
+				fallbackModel := cfg.BudgetConfig.FallbackModel
+				if fallbackModel == "" {
+					fallbackModel = cfg.FallbackModel
+				}
+				if fallbackModel != "" {
+					cfg.Model = fallbackModel
+					params.Model = fallbackModel
 				}
 				// FallbackNotify: proceed, we'll add a warning event after the call.
 			}
