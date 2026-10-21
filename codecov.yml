@@ -1,0 +1,15 @@
+# Codecov settings: https://docs.codecov.com/docs/codecov-yaml
+
+# Example programs are run by hand, not by tests, so leave them out of coverage.
+ignore:
+  - "examples/**"
+
+coverage:
+  status:
+    # Report coverage on PRs without failing them.
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
