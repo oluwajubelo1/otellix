@@ -41,3 +41,26 @@ jobs:
           file: ./coverage.out
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  fiber:
+    name: Fiber middleware module
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: middleware/fiber
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: middleware/fiber/go.mod
+          check-latest: true
+
+      - name: Verify go.mod is tidy
+        run: go mod tidy -diff
+
+      - name: Run tests
+        run: go test -v -race ./...
