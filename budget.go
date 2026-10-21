@@ -29,6 +29,11 @@ type BudgetConfig struct {
 	// PerProjectLimit is the maximum USD spend per project within the budget window.
 	PerProjectLimit float64
 
+	// UnattributedLimit is the maximum USD spend, shared by all calls with no
+	// user ID, within the budget window. Without it, calls with no user ID
+	// skip per-user limits entirely.
+	UnattributedLimit float64
+
 	// PerUserDailyLimit is the maximum USD spend per user within the budget window.
 	// It is used only when PerUserLimit is zero.
 	//
@@ -195,6 +200,9 @@ func (s *InMemoryBudgetStore) GetResetTime(ctx context.Context, key string) time
 	return s.window.ResetAt(now, oldest)
 }
 
+// unattributedKey is the budget store key shared by calls with no user ID.
+const unattributedKey = "unattributed"
+
 // BudgetEnforcer checks and records budget usage.
 type BudgetEnforcer struct {
 	config *BudgetConfig
@@ -213,13 +221,28 @@ func NewBudgetEnforcer(config *BudgetConfig) *BudgetEnforcer {
 	return &BudgetEnforcer{config: config, store: config.Store}
 }
 
+// userBudget returns the store key and limit that apply to userID: the
+// user's own budget, or the shared unattributed budget when userID is empty.
+// An empty key means no user-level limit applies.
+func (e *BudgetEnforcer) userBudget(userID string) (key string, limit float64) {
+	if userID != "" {
+		if l := e.config.userLimit(); l > 0 {
+			return "user:" + userID, l
+		}
+		return "", 0
+	}
+	if e.config.UnattributedLimit > 0 {
+		return unattributedKey, e.config.UnattributedLimit
+	}
+	return "", 0
+}
+
 // Check determines whether a call is allowed given current budget usage.
 // Returns (allowed, fallbackAction).
 func (e *BudgetEnforcer) Check(ctx context.Context, userID, projectID string, estimatedCost float64) (bool, FallbackAction) {
-	// Check per-user limit.
-	if e.config.userLimit() > 0 && userID != "" {
-		userSpend := e.store.GetSpend(ctx, "user:"+userID)
-		if userSpend+estimatedCost > e.config.userLimit() {
+	// Check per-user limit, or the shared limit for calls with no user.
+	if key, limit := e.userBudget(userID); key != "" {
+		if e.store.GetSpend(ctx, key)+estimatedCost > limit {
 			return false, e.config.FallbackAction
 		}
 	}
@@ -239,6 +262,8 @@ func (e *BudgetEnforcer) Check(ctx context.Context, userID, projectID string, es
 func (e *BudgetEnforcer) Record(ctx context.Context, userID, projectID string, actualCost float64) {
 	if userID != "" {
 		e.store.AddSpend(ctx, "user:"+userID, actualCost)
+	} else if e.config.UnattributedLimit > 0 {
+		e.store.AddSpend(ctx, unattributedKey, actualCost)
 	}
 	if projectID != "" {
 		e.store.AddSpend(ctx, "project:"+projectID, actualCost)
@@ -250,8 +275,8 @@ func (e *BudgetEnforcer) Remaining(userID, projectID string) float64 {
 	ctx := context.Background()
 	remaining := float64(1<<63 - 1) // start at max
 
-	if e.config.userLimit() > 0 && userID != "" {
-		userRemaining := e.config.userLimit() - e.store.GetSpend(ctx, "user:"+userID)
+	if key, limit := e.userBudget(userID); key != "" {
+		userRemaining := limit - e.store.GetSpend(ctx, key)
 		if userRemaining < remaining {
 			remaining = userRemaining
 		}
@@ -265,51 +290,48 @@ func (e *BudgetEnforcer) Remaining(userID, projectID string) float64 {
 	return remaining
 }
 
+// tightestBudget returns the applicable budget with the least remaining:
+// the user's (or the shared unattributed one) or the project's. An empty
+// key means no limit applies.
+func (e *BudgetEnforcer) tightestBudget(ctx context.Context, userID, projectID string) (key string, usage, limit float64) {
+	if k, l := e.userBudget(userID); k != "" {
+		key, limit = k, l
+		usage = e.store.GetSpend(ctx, k)
+	}
+	if l := e.config.projectLimit(); l > 0 && projectID != "" {
+		k := "project:" + projectID
+		u := e.store.GetSpend(ctx, k)
+		if key == "" || l-u < limit-usage {
+			key, usage, limit = k, u, l
+		}
+	}
+	return key, usage, limit
+}
+
 // Status returns the current detailed budget status for a user/project.
 func (e *BudgetEnforcer) Status(ctx context.Context, userID, projectID string) BudgetStatus {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	var usage, limit float64
-	var exceeded bool
-
-	if userID != "" && e.config.userLimit() > 0 {
-		usage = e.store.GetSpend(ctx, "user:"+userID)
-		limit = e.config.userLimit()
-	} else if projectID != "" && e.config.projectLimit() > 0 {
-		usage = e.store.GetSpend(ctx, "project:"+projectID)
-		limit = e.config.projectLimit()
-	}
-
-	if limit > 0 && usage >= limit {
-		exceeded = true
-	}
+	_, usage, limit := e.tightestBudget(ctx, userID, projectID)
 
 	return BudgetStatus{
 		Usage:      usage,
 		Remaining:  limit - usage,
-		IsExceeded: exceeded,
+		IsExceeded: limit > 0 && usage >= limit,
 		Mode:       e.config.FallbackAction,
 	}
 }
 
-// BudgetError creates a BudgetExceededError with current state.
+// BudgetError creates a BudgetExceededError describing the tightest budget.
 func (e *BudgetEnforcer) BudgetError(userID, projectID string) *BudgetExceededError {
 	ctx := context.Background()
-	var currentSpend, limit float64
+	key, currentSpend, limit := e.tightestBudget(ctx, userID, projectID)
 
-	if userID != "" && e.config.userLimit() > 0 {
-		currentSpend = e.store.GetSpend(ctx, "user:"+userID)
-		limit = e.config.userLimit()
-	} else if projectID != "" && e.config.projectLimit() > 0 {
-		currentSpend = e.store.GetSpend(ctx, "project:"+projectID)
-		limit = e.config.projectLimit()
-	}
-
-	resetKey := "user:" + userID
-	if userID == "" {
-		resetKey = "project:" + projectID
+	var resetAt time.Time
+	if key != "" {
+		resetAt = e.store.GetResetTime(ctx, key)
 	}
 
 	return &BudgetExceededError{
@@ -317,6 +339,6 @@ func (e *BudgetEnforcer) BudgetError(userID, projectID string) *BudgetExceededEr
 		ProjectID:    projectID,
 		CurrentSpend: currentSpend,
 		Limit:        limit,
-		ResetAt:      e.store.GetResetTime(ctx, resetKey),
+		ResetAt:      resetAt,
 	}
 }
