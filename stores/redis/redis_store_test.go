@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oluwajubelo1/otellix"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -101,5 +102,48 @@ func TestRedisBudgetStoreLongWindowTTL(t *testing.T) {
 	}
 	if ttl < interval {
 		t.Errorf("key TTL %v is shorter than the %v window", ttl, interval)
+	}
+}
+
+func TestRedisBudgetStoreCalendarMonth(t *testing.T) {
+	client := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Skip("Redis not available on localhost:6379, skipping integration test")
+	}
+
+	store := NewRedisBudgetStoreWithWindow(client, "test:otellix:month", otellix.CalendarMonth(time.UTC))
+	key := "user:test-month"
+	fullKey := "test:otellix:month:" + key
+	client.Del(ctx, fullKey)
+	defer client.Del(ctx, fullKey)
+
+	// Spend from the last second of the previous month must not count.
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	client.ZAdd(ctx, fullKey, redis.Z{Score: float64(monthStart.Unix() - 1), Member: "old:5.00"})
+
+	store.AddSpend(ctx, key, 0.25)
+	store.AddSpend(ctx, key, 0.50)
+
+	if spend := store.GetSpend(ctx, key); spend != 0.75 {
+		t.Errorf("expected 0.75 spend this month, got %v", spend)
+	}
+
+	nextMonth := monthStart.AddDate(0, 1, 0)
+	if reset := store.GetResetTime(ctx, key); !reset.Equal(nextMonth) {
+		t.Errorf("expected reset at %v, got %v", nextMonth, reset)
+	}
+
+	ttl, err := client.TTL(ctx, fullKey).Result()
+	if err != nil {
+		t.Fatalf("TTL: %v", err)
+	}
+	if ttl < 31*24*time.Hour {
+		t.Errorf("key TTL %v is shorter than a month", ttl)
 	}
 }

@@ -12,8 +12,8 @@ import (
 func TestPromptDecorator(t *testing.T) {
 	// Setup budget with $0.05 limit and $0.04 already spent.
 	bc := &otellix.BudgetConfig{
-		PerUserDailyLimit: 0.05,
-		FallbackAction:    otellix.FallbackNotify,
+		PerUserLimit:   0.05,
+		FallbackAction: otellix.FallbackNotify,
 	}
 	enforcer := otellix.NewBudgetEnforcer(bc)
 	enforcer.Record(context.Background(), "user_decorator", "", 0.04)

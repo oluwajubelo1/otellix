@@ -15,9 +15,9 @@ import (
 func main() {
 	// 1. Setup a budget enforcer with a low limit.
 	bc := &otellix.BudgetConfig{
-		PerUserDailyLimit: 0.10, // $0.10 limit
-		FallbackAction:    otellix.FallbackNotify,
-		ResetInterval:     24 * time.Hour,
+		PerUserLimit:   0.10, // $0.10 limit
+		FallbackAction: otellix.FallbackNotify,
+		ResetInterval:  24 * time.Hour,
 	}
 	enforcer := otellix.NewBudgetEnforcer(bc)
 

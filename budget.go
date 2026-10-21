@@ -23,10 +23,24 @@ const (
 
 // BudgetConfig holds budget enforcement settings.
 type BudgetConfig struct {
-	// PerUserDailyLimit is the maximum USD spend per user in the rolling window.
+	// PerUserLimit is the maximum USD spend per user within the budget window.
+	PerUserLimit float64
+
+	// PerProjectLimit is the maximum USD spend per project within the budget window.
+	PerProjectLimit float64
+
+	// PerUserDailyLimit is the maximum USD spend per user within the budget window.
+	// It is used only when PerUserLimit is zero.
+	//
+	// Deprecated: the limit applies to the configured window, which need not be
+	// a day. Use PerUserLimit.
 	PerUserDailyLimit float64
 
-	// PerProjectDailyLimit is the maximum USD spend per project in the rolling window.
+	// PerProjectDailyLimit is the maximum USD spend per project within the budget window.
+	// It is used only when PerProjectLimit is zero.
+	//
+	// Deprecated: the limit applies to the configured window, which need not be
+	// a day. Use PerProjectLimit.
 	PerProjectDailyLimit float64
 
 	// FallbackAction determines what to do when the budget is exceeded.
@@ -35,16 +49,38 @@ type BudgetConfig struct {
 	// FallbackModel is the cheaper model to use when FallbackDowngrade is triggered.
 	FallbackModel string
 
-	// ResetInterval is the rolling window duration. Default: 24 hours.
+	// Window is the budget window for the default in-memory store, e.g.
+	// CalendarMonth(time.UTC). It takes precedence over ResetInterval.
+	// Ignored when Store is set: configure the store's window instead.
+	Window *BudgetWindow
+
+	// ResetInterval is the rolling window duration for the default in-memory
+	// store. Default: 24 hours. Ignored when Store or Window is set.
 	ResetInterval time.Duration
 
 	// Store is the backing store for budget data. Default: in-memory.
 	Store BudgetStore
 }
 
+// userLimit returns the per-user limit, falling back to the deprecated field.
+func (c *BudgetConfig) userLimit() float64 {
+	if c.PerUserLimit > 0 {
+		return c.PerUserLimit
+	}
+	return c.PerUserDailyLimit
+}
+
+// projectLimit returns the per-project limit, falling back to the deprecated field.
+func (c *BudgetConfig) projectLimit() float64 {
+	if c.PerProjectLimit > 0 {
+		return c.PerProjectLimit
+	}
+	return c.PerProjectDailyLimit
+}
+
 // BudgetStore is the interface for pluggable budget storage backends.
 type BudgetStore interface {
-	// GetSpend returns the current spend for a key within the rolling window.
+	// GetSpend returns the current spend for a key within the budget window.
 	GetSpend(ctx context.Context, key string) float64
 
 	// AddSpend records additional spend for a key.
@@ -68,27 +104,37 @@ func (e *BudgetExceededError) Error() string {
 		e.UserID, e.ProjectID, e.CurrentSpend, e.Limit, e.ResetAt.Format(time.RFC3339))
 }
 
-// spendEntry tracks spend with time-bucketed counters for rolling window expiry.
+// spendEntry holds a key's spend as time-ordered buckets.
 type spendEntry struct {
 	mu      sync.Mutex
 	buckets []spendBucket
 }
 
+// spendBucket is one or more spend events merged together. It counts
+// towards the window until its latest event falls out of it.
 type spendBucket struct {
-	amount    float64
-	timestamp time.Time
+	amount float64
+	first  time.Time
+	last   time.Time
 }
 
-// InMemoryBudgetStore is a thread-safe, in-memory budget store using
-// rolling time-bucketed counters. Suitable for single-process deployments.
+// InMemoryBudgetStore is a thread-safe, in-memory budget store. Spend is
+// lost when the process restarts, so it suits development, tests and
+// single-process deployments. Use RedisBudgetStore for anything else.
 type InMemoryBudgetStore struct {
-	data     sync.Map // map[string]*spendEntry
-	interval time.Duration
+	data   sync.Map // map[string]*spendEntry
+	window BudgetWindow
 }
 
-// NewInMemoryBudgetStore creates a new in-memory store with the given window.
+// NewInMemoryBudgetStore creates a new in-memory store with a rolling window of the given length.
 func NewInMemoryBudgetStore(interval time.Duration) *InMemoryBudgetStore {
-	return &InMemoryBudgetStore{interval: interval}
+	return NewInMemoryBudgetStoreWithWindow(RollingWindow(interval))
+}
+
+// NewInMemoryBudgetStoreWithWindow creates a new in-memory store with the given window,
+// e.g. CalendarMonth(time.UTC).
+func NewInMemoryBudgetStoreWithWindow(window BudgetWindow) *InMemoryBudgetStore {
+	return &InMemoryBudgetStore{window: window}
 }
 
 func (s *InMemoryBudgetStore) getOrCreate(key string) *spendEntry {
@@ -96,18 +142,25 @@ func (s *InMemoryBudgetStore) getOrCreate(key string) *spendEntry {
 	return val.(*spendEntry)
 }
 
+// prune drops buckets that no longer count at now. Callers must hold entry.mu.
+func (s *InMemoryBudgetStore) prune(entry *spendEntry, now time.Time) {
+	start := s.window.Start(now)
+	i := 0
+	for i < len(entry.buckets) && entry.buckets[i].last.Before(start) {
+		i++
+	}
+	entry.buckets = entry.buckets[i:]
+}
+
 func (s *InMemoryBudgetStore) GetSpend(ctx context.Context, key string) float64 {
 	entry := s.getOrCreate(key)
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
-	cutoff := time.Now().Add(-s.interval)
+	s.prune(entry, time.Now())
 	var total float64
-	// Sum only buckets within the rolling window.
 	for _, b := range entry.buckets {
-		if b.timestamp.After(cutoff) {
-			total += b.amount
-		}
+		total += b.amount
 	}
 	return total
 }
@@ -117,21 +170,15 @@ func (s *InMemoryBudgetStore) AddSpend(ctx context.Context, key string, amount f
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
-	// Append new bucket.
-	entry.buckets = append(entry.buckets, spendBucket{
-		amount:    amount,
-		timestamp: time.Now(),
-	})
+	now := time.Now()
+	s.prune(entry, now)
 
-	// Prune expired buckets to prevent unbounded growth.
-	cutoff := time.Now().Add(-s.interval)
-	pruned := entry.buckets[:0]
-	for _, b := range entry.buckets {
-		if b.timestamp.After(cutoff) {
-			pruned = append(pruned, b)
-		}
+	if n := len(entry.buckets); n > 0 && s.window.canMerge(entry.buckets[n-1].first, now) {
+		entry.buckets[n-1].amount += amount
+		entry.buckets[n-1].last = now
+		return
 	}
-	entry.buckets = pruned
+	entry.buckets = append(entry.buckets, spendBucket{amount: amount, first: now, last: now})
 }
 
 func (s *InMemoryBudgetStore) GetResetTime(ctx context.Context, key string) time.Time {
@@ -139,12 +186,13 @@ func (s *InMemoryBudgetStore) GetResetTime(ctx context.Context, key string) time
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
-	if len(entry.buckets) == 0 {
-		return time.Now().Add(s.interval)
+	now := time.Now()
+	s.prune(entry, now)
+	var oldest time.Time
+	if len(entry.buckets) > 0 {
+		oldest = entry.buckets[0].last
 	}
-	// The oldest bucket in the window determines the next "reset" — when it expires.
-	oldest := entry.buckets[0].timestamp
-	return oldest.Add(s.interval)
+	return s.window.ResetAt(now, oldest)
 }
 
 // BudgetEnforcer checks and records budget usage.
@@ -155,12 +203,12 @@ type BudgetEnforcer struct {
 
 // NewBudgetEnforcer creates a new enforcer. Uses InMemoryBudgetStore if config.Store is nil.
 func NewBudgetEnforcer(config *BudgetConfig) *BudgetEnforcer {
-	interval := config.ResetInterval
-	if interval == 0 {
-		interval = 24 * time.Hour
-	}
 	if config.Store == nil {
-		config.Store = NewInMemoryBudgetStore(interval)
+		window := RollingWindow(config.ResetInterval)
+		if config.Window != nil {
+			window = *config.Window
+		}
+		config.Store = NewInMemoryBudgetStoreWithWindow(window)
 	}
 	return &BudgetEnforcer{config: config, store: config.Store}
 }
@@ -169,17 +217,17 @@ func NewBudgetEnforcer(config *BudgetConfig) *BudgetEnforcer {
 // Returns (allowed, fallbackAction).
 func (e *BudgetEnforcer) Check(ctx context.Context, userID, projectID string, estimatedCost float64) (bool, FallbackAction) {
 	// Check per-user limit.
-	if e.config.PerUserDailyLimit > 0 && userID != "" {
+	if e.config.userLimit() > 0 && userID != "" {
 		userSpend := e.store.GetSpend(ctx, "user:"+userID)
-		if userSpend+estimatedCost > e.config.PerUserDailyLimit {
+		if userSpend+estimatedCost > e.config.userLimit() {
 			return false, e.config.FallbackAction
 		}
 	}
 
 	// Check per-project limit.
-	if e.config.PerProjectDailyLimit > 0 && projectID != "" {
+	if e.config.projectLimit() > 0 && projectID != "" {
 		projSpend := e.store.GetSpend(ctx, "project:"+projectID)
-		if projSpend+estimatedCost > e.config.PerProjectDailyLimit {
+		if projSpend+estimatedCost > e.config.projectLimit() {
 			return false, e.config.FallbackAction
 		}
 	}
@@ -202,14 +250,14 @@ func (e *BudgetEnforcer) Remaining(userID, projectID string) float64 {
 	ctx := context.Background()
 	remaining := float64(1<<63 - 1) // start at max
 
-	if e.config.PerUserDailyLimit > 0 && userID != "" {
-		userRemaining := e.config.PerUserDailyLimit - e.store.GetSpend(ctx, "user:"+userID)
+	if e.config.userLimit() > 0 && userID != "" {
+		userRemaining := e.config.userLimit() - e.store.GetSpend(ctx, "user:"+userID)
 		if userRemaining < remaining {
 			remaining = userRemaining
 		}
 	}
-	if e.config.PerProjectDailyLimit > 0 && projectID != "" {
-		projRemaining := e.config.PerProjectDailyLimit - e.store.GetSpend(ctx, "project:"+projectID)
+	if e.config.projectLimit() > 0 && projectID != "" {
+		projRemaining := e.config.projectLimit() - e.store.GetSpend(ctx, "project:"+projectID)
 		if projRemaining < remaining {
 			remaining = projRemaining
 		}
@@ -226,12 +274,12 @@ func (e *BudgetEnforcer) Status(ctx context.Context, userID, projectID string) B
 	var usage, limit float64
 	var exceeded bool
 
-	if userID != "" && e.config.PerUserDailyLimit > 0 {
+	if userID != "" && e.config.userLimit() > 0 {
 		usage = e.store.GetSpend(ctx, "user:"+userID)
-		limit = e.config.PerUserDailyLimit
-	} else if projectID != "" && e.config.PerProjectDailyLimit > 0 {
+		limit = e.config.userLimit()
+	} else if projectID != "" && e.config.projectLimit() > 0 {
 		usage = e.store.GetSpend(ctx, "project:"+projectID)
-		limit = e.config.PerProjectDailyLimit
+		limit = e.config.projectLimit()
 	}
 
 	if limit > 0 && usage >= limit {
@@ -251,12 +299,12 @@ func (e *BudgetEnforcer) BudgetError(userID, projectID string) *BudgetExceededEr
 	ctx := context.Background()
 	var currentSpend, limit float64
 
-	if userID != "" && e.config.PerUserDailyLimit > 0 {
+	if userID != "" && e.config.userLimit() > 0 {
 		currentSpend = e.store.GetSpend(ctx, "user:"+userID)
-		limit = e.config.PerUserDailyLimit
-	} else if projectID != "" && e.config.PerProjectDailyLimit > 0 {
+		limit = e.config.userLimit()
+	} else if projectID != "" && e.config.projectLimit() > 0 {
 		currentSpend = e.store.GetSpend(ctx, "project:"+projectID)
-		limit = e.config.PerProjectDailyLimit
+		limit = e.config.projectLimit()
 	}
 
 	resetKey := "user:" + userID
