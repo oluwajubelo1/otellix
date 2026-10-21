@@ -26,7 +26,7 @@ Most LLM observability tools tell you what you spent *after* the money is gone. 
 ## ⚡ Key Features
 
 - **⛓️ LangChainGo Integration**: Drop-in `callbacks.Handler` for LangChainGo. Automatic token, cost, and span capture for chains.
-- **🔌 Zero-Config Attribution**: Automatically capture `user_id` and `project_id` from Gin/Echo middleware. No more manual context plumbing.
+- **🔌 Zero-Config Attribution**: Automatically capture `user_id` and `project_id` from Gin, Echo or Fiber middleware. No more manual context plumbing.
 - **🗄️ Redis Budget Store**: Distributed budget enforcement for high-availability production clusters.
 - **🚀 Go-Native & High-Performance**: Built for Go 1.22+ using native streaming and OpenTelemetry. 
 - **📊 Standard-Compliant (OTel)**: 100% OTel compliant. Works with Jaeger, Honeycomb, Prometheus, and Grafana.
@@ -134,9 +134,11 @@ Otellix populates your spans with industry-standard attributes:
 
 ## 📖 Deep Dives
 *   [**Architecture**](docs/architecture.md) — How Otellix fits into the OTel ecosystem.
-*   [**Budget Guardrails**](docs/budget-guardrails.md) — Redis & InMemory stores.
+*   [**Budget Guardrails**](docs/budget-guardrails.md) — Limits, fallback actions, Redis & InMemory stores.
+*   [**Budget Windows**](docs/budget-windows.md) — Rolling, daily and monthly budgets, time zones and resets.
+*   [**Cost Attribution**](docs/attribution.md) — Who spent what, and capping calls with no user.
 *   [**Integrations**](docs/integrations.md) — LangChainGo setup.
-*   [**Middleware & Identity**](docs/middleware.md) — Zero-config attribution.
+*   [**Middleware & Identity**](docs/middleware.md) — Gin, Echo and Fiber attribution, verified identity.
 *   [**Prompt Caching**](docs/caching.md) — ROI analysis and tracking.
 
 ---

@@ -14,28 +14,25 @@
 //	    otellixmw.WithJWTClaim("user_id"),
 //	    otellixmw.WithProjectHeader("X-Tenant-ID"),
 //	))
+//
+// Reading identity your auth middleware has already verified (recommended
+// whenever budgets are enforced):
+//
+//	r.Use(authMiddleware) // sets c.Set("user_id", ...) after verifying the token
+//	r.Use(otellixmw.GinMiddleware(otellixmw.WithUserFromContext("user_id")))
 package middleware
 
 import (
-	"strings"
-
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	jwt "github.com/golang-jwt/jwt/v5"
-	"github.com/oluwajubelo1/otellix"
+	"github.com/oluwajubelo1/otellix/internal/identity"
 )
 
 // MiddlewareConfig holds configuration for HTTP middleware.
-type MiddlewareConfig struct {
-	// JWTClaim is the JWT claim name to extract user_id from. Default: "sub".
-	JWTClaim string
-
-	// ProjectHeader is the HTTP header name to extract project_id from. Default: "X-Project-ID".
-	ProjectHeader string
-}
+type MiddlewareConfig = identity.Config
 
 // MiddlewareOption is a functional option for middleware configuration.
 type MiddlewareOption func(*MiddlewareConfig)
@@ -50,41 +47,45 @@ func WithProjectHeader(header string) MiddlewareOption {
 	return func(c *MiddlewareConfig) { c.ProjectHeader = header }
 }
 
-func defaultMiddlewareConfig() *MiddlewareConfig {
-	return &MiddlewareConfig{
-		JWTClaim:      "sub",
-		ProjectHeader: "X-Project-ID",
-	}
+// WithUserFromContext reads user_id from the framework context value under key
+// (gin.Context.Get / echo.Context.Get) instead of parsing the JWT. Use it
+// with an auth middleware that verifies the caller and stores their ID, and
+// register this middleware after it. The value must be a string.
+//
+// The default JWT extraction does not verify signatures, so on routes without
+// verified auth a caller can choose any user_id, including a new one per
+// request to sidestep per-user budgets.
+func WithUserFromContext(key string) MiddlewareOption {
+	return func(c *MiddlewareConfig) { c.UserContextKey = key }
+}
+
+// WithProjectFromContext reads project_id from the framework context value
+// under key instead of the project header, so callers cannot choose which
+// project's budget they spend. The value must be a string.
+func WithProjectFromContext(key string) MiddlewareOption {
+	return func(c *MiddlewareConfig) { c.ProjectContextKey = key }
 }
 
 // GinMiddleware returns a Gin middleware that extracts user_id and project_id
 // from requests and injects them into the context for downstream Trace() calls.
 func GinMiddleware(opts ...MiddlewareOption) gin.HandlerFunc {
-	cfg := defaultMiddlewareConfig()
+	cfg := identity.Default()
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
 	return func(c *gin.Context) {
-		tracer := otel.Tracer("github.com/oluwajubelo1/otellix/middleware")
+		tracer := otel.Tracer(identity.TracerName)
 		ctx, span := tracer.Start(c.Request.Context(), "http.request",
 			trace.WithSpanKind(trace.SpanKindServer),
 		)
 		defer span.End()
 
-		// Extract user_id from JWT.
-		userID := extractUserIDFromJWT(c.GetHeader("Authorization"), cfg.JWTClaim)
-		if userID != "" {
-			span.SetAttributes(attribute.String("llm.user_id", userID))
-			ctx = otellix.ContextWithUser(ctx, userID)
-		}
-
-		// Extract project_id from header.
-		projectID := c.GetHeader(cfg.ProjectHeader)
-		if projectID != "" {
-			span.SetAttributes(attribute.String("llm.project_id", projectID))
-			ctx = otellix.ContextWithProject(ctx, projectID)
-		}
+		userID, projectID := cfg.Resolve(func(key string) any {
+			v, _ := c.Get(key)
+			return v
+		}, c.GetHeader)
+		ctx = identity.Apply(ctx, span, userID, projectID)
 
 		// Set request attributes.
 		span.SetAttributes(
@@ -98,36 +99,4 @@ func GinMiddleware(opts ...MiddlewareOption) gin.HandlerFunc {
 		// Set response status.
 		span.SetAttributes(attribute.Int("http.status_code", c.Writer.Status()))
 	}
-}
-
-// extractUserIDFromJWT parses a JWT from the Authorization header and extracts
-// the specified claim. Uses unverified parsing — verification is the responsibility
-// of the application's auth middleware.
-func extractUserIDFromJWT(authHeader, claimName string) string {
-	if authHeader == "" {
-		return ""
-	}
-
-	// Strip "Bearer " prefix.
-	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	if tokenStr == authHeader {
-		return "" // no "Bearer " prefix found
-	}
-
-	// Parse without verification — auth validation is the app's responsibility.
-	parser := jwt.NewParser()
-	token, _, err := parser.ParseUnverified(tokenStr, jwt.MapClaims{})
-	if err != nil {
-		return ""
-	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return ""
-	}
-
-	if val, ok := claims[claimName].(string); ok {
-		return val
-	}
-	return ""
 }

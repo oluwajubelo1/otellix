@@ -42,10 +42,10 @@ func main() {
 	}
 
 	budgetCfg := &otellix.BudgetConfig{
-		PerUserDailyLimit:    0.05,
-		PerProjectDailyLimit: 2.00,
-		FallbackAction:       otellix.FallbackBlock,
-		ResetInterval:        24 * time.Hour,
+		PerUserLimit:    0.05,
+		PerProjectLimit: 2.00,
+		FallbackAction:  otellix.FallbackBlock,
+		ResetInterval:   24 * time.Hour,
 	}
 
 	fmt.Println("=== Otellix Budget Guardrail Demo ===")

@@ -21,6 +21,17 @@ func ContextWithProject(ctx context.Context, projectID string) context.Context {
 	return context.WithValue(ctx, projectIDKey, projectID)
 }
 
+// fillAttributionFromContext sets UserID and ProjectID from ctx when no
+// option set them, so middleware attribution reaches every call.
+func (c *Config) fillAttributionFromContext(ctx context.Context) {
+	if c.UserID == "" {
+		c.UserID = UserFromContext(ctx)
+	}
+	if c.ProjectID == "" {
+		c.ProjectID = ProjectFromContext(ctx)
+	}
+}
+
 // UserFromContext retrieves the UserID from the context, if present.
 func UserFromContext(ctx context.Context) string {
 	if v, ok := ctx.Value(userIDKey).(string); ok {

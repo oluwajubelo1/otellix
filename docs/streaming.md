@@ -51,6 +51,21 @@ A unique feature of Otellix is the ability to **abort a stream mid-flight** if a
 ### Why this matters:
 Traditional SDKs only track costs *after* the stream finishes. A single malicious or long-running prompt can cost significantly more than the user’s daily limit before you have a chance to stop it. Otellix stops the leak **before it happens**.
 
+## Attribution and Budgets for Streams
+
+`TraceStream` resolves the user and project exactly like `Trace`: from `otellix.WithUserID` / `otellix.WithProjectID` options first, then from the context. Contexts set by `otellix.ContextWithUser` / `otellix.ContextWithProject`, or by the [Gin, Echo or Fiber middleware](middleware.md), are picked up automatically:
+
+```go
+// In a Gin handler. The middleware already put the user on the request context.
+stream, err := otellix.TraceStream(c.Request.Context(), provider, params,
+    otellix.WithBudgetConfig(budget),
+)
+```
+
+This means `PerUserLimit`, `PerProjectLimit` and `UnattributedLimit` all apply to streams, both in the pre-start check and in the mid-stream cutoff. Stream spans also carry `llm.user_attributed`. See [Cost Attribution](attribution.md).
+
+> **Fixed in this release:** earlier versions of `TraceStream` ignored the context, so streams were only attributed (and budgeted) when you passed `WithUserID` / `WithProjectID` explicitly.
+
 ## Performance Considerations
 
 *   **Zero-Dependency Parsing**: Our **Ollama** provider uses a raw HTTP NDJSON parser instead of a heavy SDK, making it extremely fast for local development and edge deployments.

@@ -45,6 +45,9 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 		cfg.Model = params.Model
 	}
 
+	// Automatic identity extraction from context (middleware support).
+	cfg.fillAttributionFromContext(ctx)
+
 	var enforcer *BudgetEnforcer
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)
@@ -81,6 +84,7 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 		attribute.String("llm.feature_id", cfg.FeatureID),
 		attribute.String("llm.user_id", cfg.UserID),
 		attribute.String("llm.project_id", cfg.ProjectID),
+		attribute.Bool("llm.user_attributed", cfg.UserID != ""),
 	)
 
 	for k, v := range cfg.Attributes {

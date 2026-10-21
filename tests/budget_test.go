@@ -23,9 +23,9 @@ func init() {
 func TestBudgetUnderLimit(t *testing.T) {
 	store := otellix.NewInMemoryBudgetStore(24 * time.Hour)
 	cfg := &otellix.BudgetConfig{
-		PerUserDailyLimit: 1.00, // $1.00 per user
-		FallbackAction:    otellix.FallbackBlock,
-		Store:             store,
+		PerUserLimit:   1.00, // $1.00 per user
+		FallbackAction: otellix.FallbackBlock,
+		Store:          store,
 	}
 
 	mock := &providers.MockProvider{
@@ -54,9 +54,9 @@ func TestBudgetPerUserBlock(t *testing.T) {
 	store.AddSpend(context.Background(), "user:user_over", 0.06)
 
 	cfg := &otellix.BudgetConfig{
-		PerUserDailyLimit: 0.05,
-		FallbackAction:    otellix.FallbackBlock,
-		Store:             store,
+		PerUserLimit:   0.05,
+		FallbackAction: otellix.FallbackBlock,
+		Store:          store,
 	}
 
 	mock := &providers.MockProvider{
@@ -90,9 +90,9 @@ func TestBudgetPerProjectBlock(t *testing.T) {
 	store.AddSpend(context.Background(), "project:proj_over", 3.00)
 
 	cfg := &otellix.BudgetConfig{
-		PerProjectDailyLimit: 2.00,
-		FallbackAction:       otellix.FallbackBlock,
-		Store:                store,
+		PerProjectLimit: 2.00,
+		FallbackAction:  otellix.FallbackBlock,
+		Store:           store,
 	}
 
 	mock := &providers.MockProvider{
@@ -120,10 +120,10 @@ func TestBudgetFallbackDowngrade(t *testing.T) {
 	store.AddSpend(context.Background(), "user:user_downgrade", 0.06)
 
 	cfg := &otellix.BudgetConfig{
-		PerUserDailyLimit: 0.05,
-		FallbackAction:    otellix.FallbackDowngrade,
-		FallbackModel:     "claude-haiku-4-5",
-		Store:             store,
+		PerUserLimit:   0.05,
+		FallbackAction: otellix.FallbackDowngrade,
+		FallbackModel:  "claude-haiku-4-5",
+		Store:          store,
 	}
 
 	mock := &providers.MockProvider{
@@ -152,9 +152,9 @@ func TestBudgetFallbackDowngradeWithOption(t *testing.T) {
 	store.AddSpend(context.Background(), "user:user_downgrade_opt", 0.06)
 
 	cfg := &otellix.BudgetConfig{
-		PerUserDailyLimit: 0.05,
-		FallbackAction:    otellix.FallbackDowngrade,
-		Store:             store,
+		PerUserLimit:   0.05,
+		FallbackAction: otellix.FallbackDowngrade,
+		Store:          store,
 	}
 
 	mock := &providers.MockProvider{
@@ -182,9 +182,9 @@ func TestBudgetFallbackNotify(t *testing.T) {
 	store.AddSpend(context.Background(), "user:user_notify", 0.06)
 
 	cfg := &otellix.BudgetConfig{
-		PerUserDailyLimit: 0.05,
-		FallbackAction:    otellix.FallbackNotify,
-		Store:             store,
+		PerUserLimit:   0.05,
+		FallbackAction: otellix.FallbackNotify,
+		Store:          store,
 	}
 
 	mock := &providers.MockProvider{
@@ -230,9 +230,9 @@ func TestBudgetConcurrentSafety(t *testing.T) {
 	store := otellix.NewInMemoryBudgetStore(24 * time.Hour)
 
 	cfg := &otellix.BudgetConfig{
-		PerUserDailyLimit: 100.00, // high limit so nothing gets blocked
-		FallbackAction:    otellix.FallbackBlock,
-		Store:             store,
+		PerUserLimit:   100.00, // high limit so nothing gets blocked
+		FallbackAction: otellix.FallbackBlock,
+		Store:          store,
 	}
 
 	mock := &providers.MockProvider{

@@ -39,10 +39,10 @@ func defaultDevPrinter(cfg *Config, result *providers.CallResult, costUSD, laten
 	if enforcer != nil && cfg.UserID != "" {
 		remaining := enforcer.Remaining(cfg.UserID, cfg.ProjectID)
 		var limit float64
-		if enforcer.config.PerUserDailyLimit > 0 {
-			limit = enforcer.config.PerUserDailyLimit
-		} else if enforcer.config.PerProjectDailyLimit > 0 {
-			limit = enforcer.config.PerProjectDailyLimit
+		if enforcer.config.userLimit() > 0 {
+			limit = enforcer.config.userLimit()
+		} else if enforcer.config.projectLimit() > 0 {
+			limit = enforcer.config.projectLimit()
 		}
 		if limit > 0 {
 			spent := limit - remaining

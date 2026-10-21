@@ -70,9 +70,9 @@ func main() {
 
 	// Setup a tiny budget to demonstrate active mid-stream cutoff
 	budgetCfg := &otellix.BudgetConfig{
-		Store:                otellix.NewInMemoryBudgetStore(24 * time.Hour),
-		PerProjectDailyLimit: 0.001, // $0.001 limit
-		FallbackAction:       otellix.FallbackBlock,
+		Store:           otellix.NewInMemoryBudgetStore(24 * time.Hour),
+		PerProjectLimit: 0.001, // $0.001 limit
+		FallbackAction:  otellix.FallbackBlock,
 	}
 
 	// Call TraceStream

@@ -184,10 +184,10 @@ OpenLLMetry lacks this entirely — **Otellix's unique selling point**.
 
 **Enhancements to consider:**
 - ❌ Per-model budget limits (currently per-user/per-project)
-- ❌ Time-window budgets (hourly, daily, monthly)
+- ✅ Time-window budgets: rolling (any length), calendar day and calendar month (`BudgetWindow`)
 - ❌ Budget exhaustion hooks/callbacks
-- ❌ Budget forecasting (predict monthly spend)
-- ❌ Fallback model selection (auto-switch to cheaper model)
+- ✅ Budget forecasting: `GetForecast` projects monthly spend (reporting only, does not enforce)
+- ✅ Fallback model selection: `FallbackDowngrade` with `FallbackModel`
 
 **Effort**: Low-Medium
 **ROI**: High (deepens competitive moat)
@@ -272,10 +272,10 @@ Otellix tracks cache tokens; should add analytics layer.
 ### **Phase 5: Advanced Cost Features** (ongoing)
 **Goal**: Deepen the cost-enforcement moat
 
-1. Time-window budgets (daily/weekly/monthly)
+1. ~~Time-window budgets (daily/monthly)~~ ✅ done; weekly not yet
 2. Per-model limits
-3. Fallback model selection
-4. Cost forecasting + alerts
+3. ~~Fallback model selection~~ ✅ done (`FallbackDowngrade`)
+4. Cost forecasting + alerts (forecasting ✅ via `GetForecast`; alerts not yet)
 5. Cache ROI analytics dashboard
 
 ---

@@ -4,3 +4,6 @@ CLAUDE.md
 coverage.out
 /gin-middleware
 /langchaingo-basic
+/presentation/
+/docs/otellix-30-minute-talk.md
+/docs/netbird-enrollment-guide.md

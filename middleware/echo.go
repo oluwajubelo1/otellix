@@ -14,6 +14,12 @@
 //	    otellixmw.WithJWTClaim("user_id"),
 //	    otellixmw.WithProjectHeader("X-Tenant-ID"),
 //	))
+//
+// Reading identity your auth middleware has already verified (recommended
+// whenever budgets are enforced):
+//
+//	e.Use(authMiddleware) // sets c.Set("user_id", ...) after verifying the token
+//	e.Use(otellixmw.EchoMiddleware(otellixmw.WithUserFromContext("user_id")))
 package middleware
 
 import (
@@ -22,38 +28,27 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/oluwajubelo1/otellix"
+	"github.com/oluwajubelo1/otellix/internal/identity"
 )
 
 // EchoMiddleware returns an Echo middleware that extracts user_id and project_id
 // from requests and injects them into the context for downstream Trace() calls.
 func EchoMiddleware(opts ...MiddlewareOption) echo.MiddlewareFunc {
-	cfg := defaultMiddlewareConfig()
+	cfg := identity.Default()
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			tracer := otel.Tracer("github.com/oluwajubelo1/otellix/middleware")
+			tracer := otel.Tracer(identity.TracerName)
 			ctx, span := tracer.Start(c.Request().Context(), "http.request",
 				trace.WithSpanKind(trace.SpanKindServer),
 			)
 			defer span.End()
 
-			// Extract user_id from JWT.
-			userID := extractUserIDFromJWT(c.Request().Header.Get("Authorization"), cfg.JWTClaim)
-			if userID != "" {
-				span.SetAttributes(attribute.String("llm.user_id", userID))
-				ctx = otellix.ContextWithUser(ctx, userID)
-			}
-
-			// Extract project_id from header.
-			projectID := c.Request().Header.Get(cfg.ProjectHeader)
-			if projectID != "" {
-				span.SetAttributes(attribute.String("llm.project_id", projectID))
-				ctx = otellix.ContextWithProject(ctx, projectID)
-			}
+			userID, projectID := cfg.Resolve(c.Get, c.Request().Header.Get)
+			ctx = identity.Apply(ctx, span, userID, projectID)
 
 			// Set request attributes.
 			span.SetAttributes(

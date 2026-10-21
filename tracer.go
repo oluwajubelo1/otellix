@@ -94,12 +94,7 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	}
 
 	// Automatic identity extraction from context (middleware support).
-	if cfg.UserID == "" {
-		cfg.UserID = UserFromContext(ctx)
-	}
-	if cfg.ProjectID == "" {
-		cfg.ProjectID = ProjectFromContext(ctx)
-	}
+	cfg.fillAttributionFromContext(ctx)
 
 	var enforcer *BudgetEnforcer
 	if cfg.BudgetConfig != nil {
@@ -168,6 +163,7 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		attribute.String("llm.feature_id", cfg.FeatureID),
 		attribute.String("llm.user_id", cfg.UserID),
 		attribute.String("llm.project_id", cfg.ProjectID),
+		attribute.Bool("llm.user_attributed", cfg.UserID != ""),
 	)
 
 	for k, v := range cfg.Attributes {

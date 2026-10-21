@@ -42,10 +42,10 @@ func main() {
 
 	// Budget config for the demo.
 	budgetCfg := &otellix.BudgetConfig{
-		PerUserDailyLimit:    5.00,
-		PerProjectDailyLimit: 50.00,
-		FallbackAction:       otellix.FallbackNotify,
-		ResetInterval:        24 * time.Hour,
+		PerUserLimit:    5.00,
+		PerProjectLimit: 50.00,
+		FallbackAction:  otellix.FallbackNotify,
+		ResetInterval:   24 * time.Hour,
 	}
 
 	// Simulated features, users, and models.

@@ -40,9 +40,9 @@ func main() {
 
 	// 4. Configure Budget with a tiny limit to demonstrate enforcement.
 	budgetCfg := &otellix.BudgetConfig{
-		PerUserDailyLimit: 0.05, // $0.05 limit
-		FallbackAction:    otellix.FallbackBlock,
-		Store:             store,
+		PerUserLimit:   0.05, // $0.05 limit
+		FallbackAction: otellix.FallbackBlock,
+		Store:          store,
 	}
 
 	// 5. Provider — use the real OpenAI provider if a key is set,
