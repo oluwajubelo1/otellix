@@ -32,6 +32,15 @@ func NewRedisBudgetStore(client *redis.Client, prefix string, interval time.Dura
 	}
 }
 
+// keyTTLMargin keeps a key alive slightly past its window so the oldest
+// event is pruned by the window cutoff rather than by key expiry.
+const keyTTLMargin = time.Hour
+
+// keyTTLSeconds returns how long a budget key should live after its latest write.
+func keyTTLSeconds(interval time.Duration) int64 {
+	return int64((interval + keyTTLMargin + time.Second - 1) / time.Second)
+}
+
 // Lua scripts to ensure atomicity and minimize network round-trips.
 var addSpendScript = redis.NewScript(`
 local key = KEYS[1]
@@ -39,6 +48,7 @@ local amount = ARGV[1]
 local timestamp = ARGV[2]
 local msg_id = ARGV[3]
 local cutoff = ARGV[4]
+local ttl = ARGV[5]
 
 -- Add the spend event to the Sorted Set.
 -- Member format is "uuid:amount" to ensure uniqueness and simplify parsing.
@@ -47,8 +57,8 @@ redis.call('ZADD', key, timestamp, msg_id .. ':' .. amount)
 -- Prune events outside the rolling window.
 redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoff)
 
--- Set expiration for the whole key (sliding window cleanup).
-redis.call('EXPIRE', key, 172800) -- 48 hours
+-- Expire the whole key once every event in it is outside the window.
+redis.call('EXPIRE', key, ttl)
 return 1
 `)
 
@@ -95,7 +105,7 @@ func (s *RedisBudgetStore) AddSpend(ctx context.Context, key string, amount floa
 	cutoff := now.Add(-s.interval).Unix()
 	msgID := uuid.New().String()
 
-	addSpendScript.Run(ctx, s.client, []string{fullKey}, amount, timestamp, msgID, cutoff)
+	addSpendScript.Run(ctx, s.client, []string{fullKey}, amount, timestamp, msgID, cutoff, keyTTLSeconds(s.interval))
 }
 
 // GetResetTime returns when the oldest spend event in the current window will expire.

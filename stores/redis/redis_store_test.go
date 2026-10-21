@@ -57,3 +57,49 @@ func TestRedisBudgetStore(t *testing.T) {
 		t.Errorf("reset time %v is too far from expected %v", resetAt, expectedReset)
 	}
 }
+
+func TestKeyTTLSeconds(t *testing.T) {
+	tests := []struct {
+		interval time.Duration
+		want     int64
+	}{
+		{5 * time.Second, 3605},
+		{24 * time.Hour, 90000},
+		{30 * 24 * time.Hour, 2595600},
+		{1500 * time.Millisecond, 3602},
+	}
+	for _, tt := range tests {
+		if got := keyTTLSeconds(tt.interval); got != tt.want {
+			t.Errorf("keyTTLSeconds(%v) = %d, want %d", tt.interval, got, tt.want)
+		}
+	}
+}
+
+// Regression test: keys used to expire after a fixed 48 hours, which wiped
+// spend history for windows longer than that.
+func TestRedisBudgetStoreLongWindowTTL(t *testing.T) {
+	client := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Skip("Redis not available on localhost:6379, skipping integration test")
+	}
+
+	interval := 30 * 24 * time.Hour
+	store := NewRedisBudgetStore(client, "test:otellix:ttl", interval)
+	key := "user:test-ttl"
+	defer client.Del(ctx, "test:otellix:ttl:"+key)
+
+	store.AddSpend(ctx, key, 0.10)
+
+	ttl, err := client.TTL(ctx, "test:otellix:ttl:"+key).Result()
+	if err != nil {
+		t.Fatalf("TTL: %v", err)
+	}
+	if ttl < interval {
+		t.Errorf("key TTL %v is shorter than the %v window", ttl, interval)
+	}
+}
