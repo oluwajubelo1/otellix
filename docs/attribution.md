@@ -121,7 +121,15 @@ llm.user_attributed = false
 
 Then group by `llm.feature_id` or `http.route` to see which code paths are responsible.
 
-In Prometheus, the share of spend with no user over the last day:
+In Prometheus, the number of calls with no user over the last day:
+
+```promql
+sum(increase(otellix_llm_latency_ms_count{user_id=""}[1d])) or vector(0)
+```
+
+This is the number to watch over time. A count that suddenly climbs usually means a new code path has started making LLM calls without passing the user. The latency histogram records every call, including failed ones, so its `_count` is a call counter. `or vector(0)` makes the query show `0` instead of "No data" when every call is attributed.
+
+The share of spend with no user over the last day:
 
 ```promql
 sum(increase(otellix_llm_cost_usd_total{user_id=""}[1d]))
@@ -134,6 +142,33 @@ And which features it comes from:
 ```promql
 sum by (feature_id) (increase(otellix_llm_cost_usd_total{user_id=""}[1d]))
 ```
+
+#### On the bundled Grafana dashboard
+
+The dashboard in `examples/docker-compose/dashboards/otellix.json`, used by the Docker demo stack, includes two panels for this:
+
+| Panel | Shows | Thresholds |
+| --- | --- | --- |
+| **Unattributed Calls (last 24h)** | Calls with no user over the previous 24 hours, as a line over time | None: watch the trend |
+| **Unattributed Share of Spend (last 24h)** | Percentage of spend with no user | Green below 5%, yellow from 5%, red from 20% |
+
+To add them to your own Grafana, import the dashboard JSON, or copy the two queries above into new panels. The thresholds are starting points: if some unattributed traffic is expected, such as a public demo endpoint, raise them to match your normal level, so the alert only fires on change.
+
+A Prometheus alert on the same signal, for example when the count doubles day over day:
+
+```yaml
+- alert: OtellixUnattributedCallsRising
+  expr: |
+    sum(increase(otellix_llm_latency_ms_count{user_id=""}[1d]))
+      > 2 * (sum(increase(otellix_llm_latency_ms_count{user_id=""}[1d] offset 1d)) or vector(0))
+    and sum(increase(otellix_llm_latency_ms_count{user_id=""}[1d])) > 50
+  labels:
+    severity: warning
+  annotations:
+    summary: "LLM calls with no user doubled in a day; a new code path may not be passing the user"
+```
+
+The `> 50` floor stops it firing on tiny numbers, e.g. going from 1 call to 3.
 
 ### Step 2: fix what you can
 

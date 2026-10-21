@@ -132,6 +132,55 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "Calls with no user_id over the previous 24 hours. A rising count usually means a new code path is not passing the user. See docs/attribution.md.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0, "custom": { "lineWidth": 2, "fillOpacity": 20 } }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "id": 7,
+      "title": "Unattributed Calls (last 24h)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(increase(otellix_llm_latency_ms_count{user_id=\"\"}[1d])) or vector(0)",
+          "legendFormat": "calls with no user",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "Share of LLM spend over the previous 24 hours with no user_id, so it can't be traced to a person or capped by PerUserLimit. Cap it with BudgetConfig.UnattributedLimit.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.2 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "id": 8,
+      "options": { "colorMode": "background", "graphMode": "area", "textMode": "value" },
+      "title": "Unattributed Share of Spend (last 24h)",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "(sum(increase(otellix_llm_cost_usd_total{user_id=\"\"}[1d])) or vector(0)) / sum(increase(otellix_llm_cost_usd_total[1d]))",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "schemaVersion": 39,
