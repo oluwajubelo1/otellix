@@ -1,4 +1,5 @@
-FROM golang:1.22-alpine AS builder
+# Must satisfy go.mod's go/toolchain lines: golang images set GOTOOLCHAIN=local.
+FROM golang:1.24-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download

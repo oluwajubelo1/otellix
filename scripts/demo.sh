@@ -30,8 +30,26 @@ if command -v docker-compose &> /dev/null; then
     COMPOSE_CMD="docker-compose"
 fi
 
-# Navigate to the compose directory
-# (Assumes script is run from repo root)
+# Find the compose directory. When piped from curl there's no checkout yet,
+# so clone the repo (into ./otellix by default) and use that.
+REPO_URL="https://github.com/oluwajubelo1/otellix.git"
+CLONE_DIR="${OTELLIX_DIR:-otellix}"
+
+if [ -d examples/docker-compose ]; then
+    : # already in a checkout
+elif [ -d "$CLONE_DIR/examples/docker-compose" ]; then
+    echo -e "${BLUE}📂 Using existing checkout in ./$CLONE_DIR${NC}"
+    cd "$CLONE_DIR"
+else
+    if ! command -v git &> /dev/null; then
+        echo -e "${RED}❌ git is not installed. Please install it, or clone ${REPO_URL} and run scripts/demo.sh from the repo root.${NC}"
+        exit 1
+    fi
+    echo -e "${BLUE}📥 Cloning Otellix into ./$CLONE_DIR...${NC}"
+    git clone --depth 1 "$REPO_URL" "$CLONE_DIR"
+    cd "$CLONE_DIR"
+fi
+
 cd examples/docker-compose
 
 echo -e "${BLUE}📦 Building and starting containers...${NC}"
@@ -45,4 +63,4 @@ echo -e ""
 echo -e "Login to Grafana with: ${BLUE}admin / admin${NC}"
 echo -e "The demo app is generating mock LLM traffic automatically."
 echo -e ""
-echo -e "To stop the demo, run: ${BLUE}$COMPOSE_CMD down${NC}"
+echo -e "To stop the demo, run: ${BLUE}cd $(pwd) && $COMPOSE_CMD down${NC}"

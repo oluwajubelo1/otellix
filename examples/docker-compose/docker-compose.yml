@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Redis — shared budget store for distributed enforcement (used by examples/redis-budget)
   redis:
@@ -11,8 +9,9 @@ services:
   # Otellix demo app — makes mock LLM calls and exposes Prometheus metrics
   otellix-demo:
     build:
-      context: .
-      dockerfile: Dockerfile
+      # The app imports otellix from this repo, so build from the repo root.
+      context: ../..
+      dockerfile: examples/docker-compose/Dockerfile
     ports:
       - "9090:9090"
     environment:
@@ -21,7 +20,7 @@ services:
 
   # Prometheus — scrapes metrics from the demo app
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.15.0
     ports:
       - "9091:9090"
     volumes:
@@ -32,7 +31,7 @@ services:
 
   # Grafana — pre-loaded with Otellix dashboard
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.4
     ports:
       - "3000:3000"
     environment:

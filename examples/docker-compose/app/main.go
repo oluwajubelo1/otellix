@@ -44,8 +44,10 @@ func main() {
 	budgetCfg := &otellix.BudgetConfig{
 		PerUserLimit:    5.00,
 		PerProjectLimit: 50.00,
-		FallbackAction:  otellix.FallbackNotify,
-		ResetInterval:   24 * time.Hour,
+		// Calls with no user share one limit instead of skipping user limits.
+		UnattributedLimit: 10.00,
+		FallbackAction:    otellix.FallbackNotify,
+		ResetInterval:     24 * time.Hour,
 	}
 
 	// Simulated features, users, and models.
@@ -72,6 +74,11 @@ func main() {
 		m := models[rand.Intn(len(models))]
 		feature := features[rand.Intn(len(features))]
 		user := users[rand.Intn(len(users))]
+		// Leave ~1 in 6 calls without a user, like a background job or a
+		// handler that forgot to pass one, so the unattributed panels have data.
+		if rand.Intn(6) == 0 {
+			user = ""
+		}
 
 		mock := &providers.MockProvider{
 			ProviderName: m.provider,

@@ -110,7 +110,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum by (provider) (rate(otellix_llm_errors_total[5m]))",
+          "expr": "sum by (provider) (rate(otellix_llm_errors_total_total[5m]))",
           "legendFormat": "{{provider}}",
           "refId": "A"
         }
@@ -127,7 +127,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, model) (rate(otellix_llm_latency_ms_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, model) (rate(otellix_llm_latency_ms_milliseconds_bucket[5m])))",
           "legendFormat": "p95 {{model}}",
           "refId": "A"
         }
@@ -145,7 +145,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum(increase(otellix_llm_latency_ms_count{user_id=\"\"}[1d])) or vector(0)",
+          "expr": "sum(increase(otellix_llm_latency_ms_milliseconds_count{user_id=\"\"}[1d])) or vector(0)",
           "legendFormat": "calls with no user",
           "refId": "A"
         }
