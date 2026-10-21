@@ -126,7 +126,7 @@ func (p *Provider) Call(ctx context.Context, params providers.CallParams) (provi
 	if err != nil {
 		return providers.CallResult{}, classifyError(model, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -216,7 +216,7 @@ func (p *Provider) Stream(ctx context.Context, params providers.CallParams) (pro
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, &providers.ProviderError{
 			Provider: "ollama",
 			Model:    model,

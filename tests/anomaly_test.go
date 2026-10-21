@@ -20,7 +20,7 @@ func TestAnomalyLogNotTriggeredBelowThreshold(t *testing.T) {
 
 	// Record baseline calls with consistent cost
 	for i := 0; i < 10; i++ {
-		otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+		_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 			otellix.WithProvider("anthropic"),
 		)
 	}
@@ -60,7 +60,7 @@ func TestAnomalyLogTriggeredAboveThreshold(t *testing.T) {
 
 	// Record 10 baseline calls with small token counts
 	for i := 0; i < 10; i++ {
-		otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+		_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 			otellix.WithProvider("anthropic"),
 		)
 	}
@@ -106,7 +106,7 @@ func TestAnomalyBlockPreventCall(t *testing.T) {
 		Result: providers.CallResult{InputTokens: 1, OutputTokens: 1},
 	}
 	for i := 0; i < 10; i++ {
-		otellix.Trace(context.Background(), tinyMock, providers.CallParams{Model: "claude-sonnet-4-6"},
+		_, _ = otellix.Trace(context.Background(), tinyMock, providers.CallParams{Model: "claude-sonnet-4-6"},
 			otellix.WithProvider("anthropic"),
 		)
 	}
@@ -183,7 +183,7 @@ func TestAnomalyCallbackReceivesValues(t *testing.T) {
 
 	// Baseline
 	for i := 0; i < 5; i++ {
-		otellix.Trace(context.Background(), mock, providers.CallParams{Model: "gpt-4o"},
+		_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "gpt-4o"},
 			otellix.WithProvider("openai"),
 		)
 	}
@@ -232,7 +232,7 @@ func TestAnomalyLogAddsSpanEvent(t *testing.T) {
 		Result: providers.CallResult{InputTokens: 50, OutputTokens: 25},
 	}
 	for i := 0; i < 5; i++ {
-		otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+		_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 			otellix.WithProvider("anthropic"),
 		)
 	}

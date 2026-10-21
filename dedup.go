@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/oluwajubelo1/otellix/providers"
-	"golang.org/x/sync/singleflight"
 )
 
 // CacheStore is the interface for pluggable request deduplication backends.
@@ -39,12 +38,12 @@ type cacheEntry struct {
 }
 
 // InMemoryCacheStore is a thread-safe in-memory cache with TTL support.
-// It uses singleflight to collapse concurrent requests for the same cache key,
-// ensuring exactly one provider call when multiple goroutines request the same result.
+// A repeated request is served from the cache once the first one has
+// finished. Identical requests that arrive while the first is still in
+// flight each call the provider.
 type InMemoryCacheStore struct {
 	mu      sync.RWMutex
 	entries map[string]cacheEntry
-	sg      singleflight.Group
 }
 
 // NewInMemoryCacheStore creates a new in-memory cache store.
@@ -55,7 +54,6 @@ func NewInMemoryCacheStore() *InMemoryCacheStore {
 }
 
 // Get retrieves a cached result if it exists and is not expired.
-// Uses singleflight to collapse concurrent requests for the same key.
 func (s *InMemoryCacheStore) Get(ctx context.Context, key string) (providers.CallResult, bool) {
 	s.mu.RLock()
 	e, ok := s.entries[key]

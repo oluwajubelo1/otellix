@@ -148,7 +148,7 @@ func (s *Stream) Recv() (providers.StreamEvent, error) {
 		allowed, action := s.enforcer.Check(s.ctx, s.cfg.UserID, s.cfg.ProjectID, costUSD)
 		if !allowed && action == FallbackBlock {
 			s.span.AddEvent("budget.aborted")
-			s.Close()
+			_ = s.Close() // the budget error is what the caller needs
 			return evt, s.enforcer.BudgetError(s.cfg.UserID, s.cfg.ProjectID)
 		}
 	}

@@ -54,7 +54,7 @@ func TestOpenAIStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stream failed: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	var tokens []string
 	var totalInput, totalOutput int64

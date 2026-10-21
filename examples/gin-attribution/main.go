@@ -51,5 +51,7 @@ func main() {
 	fmt.Println("1. Run: curl -H 'X-Tenant-ID: raven-corp' http://localhost:8080/joke")
 	fmt.Println("2. Observe the 'project: raven-corp' tag in the terminal output.")
 
-	r.Run(":8080")
+	if err := r.Run(":8080"); err != nil {
+		fmt.Println("server stopped:", err)
+	}
 }

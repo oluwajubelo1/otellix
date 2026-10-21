@@ -46,11 +46,11 @@ func TestOllamaStream(t *testing.T) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 
 		// Chunk 1
-		fmt.Fprintln(w, `{"message": {"content": "Hello"}, "done": false}`)
+		_, _ = fmt.Fprintln(w, `{"message": {"content": "Hello"}, "done": false}`)
 		// Chunk 2
-		fmt.Fprintln(w, `{"message": {"content": " world"}, "done": false}`)
+		_, _ = fmt.Fprintln(w, `{"message": {"content": " world"}, "done": false}`)
 		// Final Chunk
-		fmt.Fprintln(w, `{"message": {"content": ""}, "done": true, "prompt_eval_count": 10, "eval_count": 20}`)
+		_, _ = fmt.Fprintln(w, `{"message": {"content": ""}, "done": true, "prompt_eval_count": 10, "eval_count": 20}`)
 	}))
 	defer server.Close()
 
@@ -63,7 +63,7 @@ func TestOllamaStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stream failed: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	var tokens []string
 	var totalInput, totalOutput int64
