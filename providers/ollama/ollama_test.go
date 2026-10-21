@@ -3,10 +3,12 @@ package ollama_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/oluwajubelo1/otellix/providers"
@@ -96,5 +98,30 @@ func TestOllamaStream(t *testing.T) {
 	}
 	if joined != "Hello world" {
 		t.Errorf("Unexpected response: %s", joined)
+	}
+}
+
+func TestOllamaStreamHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"error": "model 'missing' not found"}`)
+	}))
+	defer server.Close()
+
+	p := ollama.New(ollama.WithBaseURL(server.URL))
+	stream, err := p.Stream(context.Background(), providers.CallParams{Model: "missing"})
+	if stream != nil {
+		t.Error("expected no stream on an HTTP error")
+	}
+
+	var provErr *providers.ProviderError
+	if !errors.As(err, &provErr) {
+		t.Fatalf("expected *providers.ProviderError, got %T: %v", err, err)
+	}
+	if provErr.Provider != "ollama" || provErr.Model != "missing" {
+		t.Errorf("unexpected provider error fields: %+v", provErr)
+	}
+	if !strings.Contains(err.Error(), "HTTP 404") || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected the status and response body in the error, got %q", err.Error())
 	}
 }
