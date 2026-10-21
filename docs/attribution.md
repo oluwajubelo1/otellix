@@ -76,6 +76,28 @@ The middleware's `http.request` span also carries `llm.user_id`, `llm.project_id
 
 Every metric (`otellix.llm.cost.usd`, `otellix.llm.tokens.input`, `otellix.llm.tokens.output`, `otellix.llm.latency.ms` and so on) has `user_id`, `project_id` and `feature_id` labels. Unattributed calls have an empty label value, `user_id=""`.
 
+#### Metric names in Prometheus
+
+The Prometheus exporter turns the OpenTelemetry names into these Prometheus names. It adds `_total` to counters and a unit suffix where the metric has a unit:
+
+| OpenTelemetry instrument | Prometheus name |
+| --- | --- |
+| `otellix.llm.cost.usd` | `otellix_llm_cost_usd_total` |
+| `otellix.llm.tokens.input` / `.output` | `otellix_llm_tokens_input_total` / `otellix_llm_tokens_output_total` |
+| `otellix.llm.tokens.cache_read` / `.cache_write` | `otellix_llm_tokens_cache_read_total` / `otellix_llm_tokens_cache_write_total` |
+| `otellix.llm.errors.total` | `otellix_llm_errors_total_total` |
+| `otellix.llm.latency.ms` (histogram) | `otellix_llm_latency_ms_milliseconds_bucket`, `_count`, `_sum` |
+
+> **Prometheus 3 keeps the dots by default.** It stores these metrics under their original names, e.g. `otellix.llm.cost.usd_total`, so queries using the underscore names above return nothing. To get the underscore names, which every query in these docs and the bundled dashboard uses, add this to the `global` section of `prometheus.yml`:
+>
+> ```yaml
+> global:
+>   metric_name_validation_scheme: legacy
+>   metric_name_escaping_scheme: underscores
+> ```
+>
+> Prometheus 2 always uses underscore names. To keep the dotted names instead, quote them in queries: `{"otellix.llm.cost.usd_total"}`.
+
 In Prometheus, cost per user over the last day:
 
 ```promql
@@ -124,10 +146,12 @@ Then group by `llm.feature_id` or `http.route` to see which code paths are respo
 In Prometheus, the number of calls with no user over the last day:
 
 ```promql
-sum(increase(otellix_llm_latency_ms_count{user_id=""}[1d])) or vector(0)
+sum(increase(otellix_llm_latency_ms_milliseconds_count{user_id=""}[1d])) or vector(0)
 ```
 
 This is the number to watch over time. A count that suddenly climbs usually means a new code path has started making LLM calls without passing the user. The latency histogram records every call, including failed ones, so its `_count` is a call counter. `or vector(0)` makes the query show `0` instead of "No data" when every call is attributed.
+
+`increase()` measures change between samples, so it can't count the very first call of a new label combination (a new feature, model and project seen with no user). With real traffic this barely matters. With very little traffic, such as just after starting the demo stack, the count can read `0` for a few minutes even though calls with no user exist.
 
 The share of spend with no user over the last day:
 
@@ -159,9 +183,9 @@ A Prometheus alert on the same signal, for example when the count doubles day ov
 ```yaml
 - alert: OtellixUnattributedCallsRising
   expr: |
-    sum(increase(otellix_llm_latency_ms_count{user_id=""}[1d]))
-      > 2 * (sum(increase(otellix_llm_latency_ms_count{user_id=""}[1d] offset 1d)) or vector(0))
-    and sum(increase(otellix_llm_latency_ms_count{user_id=""}[1d])) > 50
+    sum(increase(otellix_llm_latency_ms_milliseconds_count{user_id=""}[1d]))
+      > 2 * (sum(increase(otellix_llm_latency_ms_milliseconds_count{user_id=""}[1d] offset 1d)) or vector(0))
+    and sum(increase(otellix_llm_latency_ms_milliseconds_count{user_id=""}[1d])) > 50
   labels:
     severity: warning
   annotations:
