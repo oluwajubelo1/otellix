@@ -140,6 +140,7 @@ Otellix populates your spans with industry-standard attributes:
 *   [**Integrations**](docs/integrations.md) — LangChainGo setup.
 *   [**Middleware & Identity**](docs/middleware.md) — Gin, Echo and Fiber attribution, verified identity.
 *   [**Prompt Caching**](docs/caching.md) — ROI analysis and tracking.
+*   [**Request Deduplication**](docs/request-deduplication.md) — One provider call for repeated and concurrent identical requests.
 
 ---
 

@@ -129,14 +129,24 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		cfg.PromptDecorator(ctx, status, &params)
 	}
 
-	// Hook 1: Dedup cache check — return cached result immediately if available.
+	// Hook 1: Dedup — return a cached result if there is one, and collapse
+	// identical requests already in flight into a single provider call.
 	if cfg.CacheConfig != nil {
 		cacheKey := makeCacheKey(cfg.Provider, cfg.Model, params)
-		if cached, ok := cfg.CacheConfig.Store.Get(ctx, cacheKey); ok {
+		if cached, ok := cfg.CacheConfig.store().Get(ctx, cacheKey); ok {
 			return cached, nil
 		}
+		return collapse(ctx, cacheKey, func() (providers.CallResult, error) {
+			return traceCall(ctx, provider, params, cfg, enforcer, cacheKey)
+		})
 	}
 
+	return traceCall(ctx, provider, params, cfg, enforcer, "")
+}
+
+// traceCall makes the provider call inside a span and records its metrics,
+// budget spend and analytics. cacheKey is empty when caching is off.
+func traceCall(ctx context.Context, provider providers.Provider, params providers.CallParams, cfg *Config, enforcer *BudgetEnforcer, cacheKey string) (providers.CallResult, error) {
 	// Hook 2: Pre-call anomaly block check.
 	if cfg.AnomalyConfig != nil && cfg.AnomalyConfig.Action == AnomalyBlock {
 		estimated := EstimateCost(cfg.Provider, cfg.Model, 500)
@@ -230,9 +240,8 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	latencyHist.Record(ctx, latencyMs, metricAttrs)
 
 	// Hook 3: Cache result in dedup store + record to analytics tracker.
-	if cfg.CacheConfig != nil {
-		cacheKey := makeCacheKey(cfg.Provider, cfg.Model, params)
-		cfg.CacheConfig.Store.Set(ctx, cacheKey, result, cfg.CacheConfig.TTL)
+	if cacheKey != "" {
+		cfg.CacheConfig.store().Set(ctx, cacheKey, result, cfg.CacheConfig.TTL)
 	}
 	recordCall(CallRecord{
 		Timestamp:        time.Now(),

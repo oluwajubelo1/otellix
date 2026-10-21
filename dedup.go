@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/oluwajubelo1/otellix/providers"
 )
@@ -31,6 +34,44 @@ type CacheConfig struct {
 	Store CacheStore
 }
 
+// defaultCacheStoreMu guards the lazy creation of a config's default store,
+// so concurrent first calls on the same config share one store.
+var defaultCacheStoreMu sync.Mutex
+
+// store returns the configured store, creating the in-memory default on first use.
+func (c *CacheConfig) store() CacheStore {
+	defaultCacheStoreMu.Lock()
+	defer defaultCacheStoreMu.Unlock()
+	if c.Store == nil {
+		c.Store = NewInMemoryCacheStore()
+	}
+	return c.Store
+}
+
+// inflight collapses identical requests that are in flight at the same time.
+var inflight singleflight.Group
+
+// collapse runs call once for all concurrent callers with the same key and
+// gives each of them its result. A caller whose own ctx ends stops waiting
+// without affecting the others. If the shared call failed only because the
+// caller that started it was cancelled, a caller whose own ctx is still live
+// makes its own call instead of inheriting that cancellation.
+func collapse(ctx context.Context, key string, call func() (providers.CallResult, error)) (providers.CallResult, error) {
+	ch := inflight.DoChan(key, func() (any, error) { return call() })
+
+	select {
+	case <-ctx.Done():
+		return providers.CallResult{}, ctx.Err()
+	case res := <-ch:
+		result, _ := res.Val.(providers.CallResult)
+		if res.Err != nil && ctx.Err() == nil &&
+			(errors.Is(res.Err, context.Canceled) || errors.Is(res.Err, context.DeadlineExceeded)) {
+			return call()
+		}
+		return result, res.Err
+	}
+}
+
 // cacheEntry holds a cached result with its expiry time.
 type cacheEntry struct {
 	result    providers.CallResult
@@ -38,9 +79,8 @@ type cacheEntry struct {
 }
 
 // InMemoryCacheStore is a thread-safe in-memory cache with TTL support.
-// A repeated request is served from the cache once the first one has
-// finished. Identical requests that arrive while the first is still in
-// flight each call the provider.
+// Trace also collapses identical requests that are in flight at the same
+// time into one provider call, whichever CacheStore is used.
 type InMemoryCacheStore struct {
 	mu      sync.RWMutex
 	entries map[string]cacheEntry
