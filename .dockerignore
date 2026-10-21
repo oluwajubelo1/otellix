@@ -1,6 +1,5 @@
 # Keep the Docker build context to what the demo image needs.
 .git
-awesome-go
 assets
 presentation
 docs
