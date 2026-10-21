@@ -17,7 +17,7 @@ func TestHandlerCreatesSpanAndRecordsUsage(t *testing.T) {
 	exporter := &memoryExporter{}
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	otel.SetTracerProvider(tp)
-	defer tp.Shutdown(context.Background())
+	defer func() { _ = tp.Shutdown(context.Background()) }()
 
 	ctx := otellix.ContextWithUser(context.Background(), "user_123")
 	ctx = otellix.ContextWithProject(ctx, "proj_456")
@@ -80,7 +80,7 @@ func TestHandlerAttachesToExistingSpan(t *testing.T) {
 	exporter := &memoryExporter{}
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	otel.SetTracerProvider(tp)
-	defer tp.Shutdown(context.Background())
+	defer func() { _ = tp.Shutdown(context.Background()) }()
 
 	ctx, parent := otel.Tracer("test").Start(context.Background(), "parent")
 

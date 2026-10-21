@@ -18,7 +18,7 @@ func TestGetBreakdownByUser(t *testing.T) {
 	}
 
 	// Call for user A
-	otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 		otellix.WithProvider("anthropic"),
 		otellix.WithUserID("user-a"),
 	)
@@ -27,7 +27,7 @@ func TestGetBreakdownByUser(t *testing.T) {
 	mock2 := &providers.MockProvider{
 		Result: providers.CallResult{InputTokens: 2000, OutputTokens: 1000},
 	}
-	otellix.Trace(context.Background(), mock2, providers.CallParams{Model: "gpt-4o"},
+	_, _ = otellix.Trace(context.Background(), mock2, providers.CallParams{Model: "gpt-4o"},
 		otellix.WithProvider("openai"),
 		otellix.WithUserID("user-b"),
 	)
@@ -61,14 +61,14 @@ func TestGetBreakdownByModel(t *testing.T) {
 		Result: providers.CallResult{InputTokens: 1000, OutputTokens: 500},
 	}
 
-	otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 		otellix.WithProvider("anthropic"),
 	)
 
 	mock2 := &providers.MockProvider{
 		Result: providers.CallResult{InputTokens: 2000, OutputTokens: 1000},
 	}
-	otellix.Trace(context.Background(), mock2, providers.CallParams{Model: "gpt-4o"},
+	_, _ = otellix.Trace(context.Background(), mock2, providers.CallParams{Model: "gpt-4o"},
 		otellix.WithProvider("openai"),
 	)
 
@@ -104,12 +104,12 @@ func TestGetBreakdownByFeature(t *testing.T) {
 		Result: providers.CallResult{InputTokens: 100, OutputTokens: 50},
 	}
 
-	otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 		otellix.WithProvider("anthropic"),
 		otellix.WithFeatureID("search"),
 	)
 
-	otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 		otellix.WithProvider("anthropic"),
 		otellix.WithFeatureID("chat"),
 	)
@@ -146,7 +146,7 @@ func TestGetBreakdownSortedByCost(t *testing.T) {
 	mock1 := &providers.MockProvider{
 		Result: providers.CallResult{InputTokens: 10, OutputTokens: 5},
 	}
-	otellix.Trace(context.Background(), mock1, providers.CallParams{Model: "gpt-4o-mini"},
+	_, _ = otellix.Trace(context.Background(), mock1, providers.CallParams{Model: "gpt-4o-mini"},
 		otellix.WithProvider("openai"),
 		otellix.WithUserID("user-cheap"),
 	)
@@ -155,7 +155,7 @@ func TestGetBreakdownSortedByCost(t *testing.T) {
 	mock2 := &providers.MockProvider{
 		Result: providers.CallResult{InputTokens: 1000, OutputTokens: 500},
 	}
-	otellix.Trace(context.Background(), mock2, providers.CallParams{Model: "claude-opus-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock2, providers.CallParams{Model: "claude-opus-4-6"},
 		otellix.WithProvider("anthropic"),
 		otellix.WithUserID("user-expensive"),
 	)
@@ -180,7 +180,7 @@ func TestGetForecastCurrentMonth(t *testing.T) {
 		Result: providers.CallResult{InputTokens: 1000, OutputTokens: 500},
 	}
 
-	otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 		otellix.WithProvider("anthropic"),
 	)
 
@@ -216,12 +216,12 @@ func TestGetForecastByUser(t *testing.T) {
 		Result: providers.CallResult{InputTokens: 1000, OutputTokens: 500},
 	}
 
-	otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 		otellix.WithProvider("anthropic"),
 		otellix.WithUserID("user-a"),
 	)
 
-	otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 		otellix.WithProvider("anthropic"),
 		otellix.WithUserID("user-b"),
 	)
@@ -246,7 +246,7 @@ func TestGetForecastProjectionConsistency(t *testing.T) {
 	}
 
 	// Make a call to populate records
-	otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-sonnet-4-6"},
 		otellix.WithProvider("anthropic"),
 	)
 
@@ -273,7 +273,7 @@ func TestGetOptimizationSuggestsCheeperModel(t *testing.T) {
 		Result: providers.CallResult{InputTokens: 1000, OutputTokens: 500},
 	}
 
-	otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-opus-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-opus-4-6"},
 		otellix.WithProvider("anthropic"),
 	)
 
@@ -303,7 +303,7 @@ func TestGetOptimizationMinimumCallCount(t *testing.T) {
 	}
 
 	// Single call to expensive model
-	otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-opus-4-6"},
+	_, _ = otellix.Trace(context.Background(), mock, providers.CallParams{Model: "claude-opus-4-6"},
 		otellix.WithProvider("anthropic"),
 	)
 

@@ -94,7 +94,7 @@ func main() {
 		fmt.Printf("\nFailed to start stream: %v\n", err)
 		return
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	fmt.Println("\n--- Assistant Response ---")
 
