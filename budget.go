@@ -209,8 +209,15 @@ type BudgetEnforcer struct {
 	store  BudgetStore
 }
 
+// defaultStoreMu guards the lazy creation of a config's default store, so
+// concurrent first calls on the same config share one store.
+var defaultStoreMu sync.Mutex
+
 // NewBudgetEnforcer creates a new enforcer. Uses InMemoryBudgetStore if config.Store is nil.
 func NewBudgetEnforcer(config *BudgetConfig) *BudgetEnforcer {
+	defaultStoreMu.Lock()
+	defer defaultStoreMu.Unlock()
+
 	if config.Store == nil {
 		window := RollingWindow(config.ResetInterval)
 		if config.Window != nil {

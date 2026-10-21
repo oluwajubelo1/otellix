@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -157,5 +158,31 @@ func TestBudgetConfigLimitFieldPrecedence(t *testing.T) {
 				t.Errorf("allowed = %v, want %v", allowed, tt.allowed)
 			}
 		})
+	}
+}
+
+// Regression test: concurrent first calls on a config without a Store used
+// to race to create the default store, and spend recorded in the losing
+// store was lost.
+func TestDefaultStoreCreatedOnceUnderConcurrency(t *testing.T) {
+	ctx := context.Background()
+	cfg := &otellix.BudgetConfig{PerUserLimit: 1000}
+
+	const calls = 50
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < calls; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			otellix.NewBudgetEnforcer(cfg).Record(ctx, "racer", "", 0.01)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if spend := otellix.NewBudgetEnforcer(cfg).Status(ctx, "racer", "").Usage; spend < 0.4999 || spend > 0.5001 {
+		t.Errorf("expected all %d calls recorded ($0.50), got $%.4f", calls, spend)
 	}
 }
