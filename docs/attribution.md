@@ -74,7 +74,9 @@ The middleware's `http.request` span also carries `llm.user_id`, `llm.project_id
 
 ### On metrics
 
-Every metric (`otellix.llm.cost.usd`, `otellix.llm.tokens.input`, `otellix.llm.tokens.output`, `otellix.llm.latency.ms` and so on) has `user_id`, `project_id` and `feature_id` labels. Unattributed calls have an empty label value, `user_id=""`.
+Every metric (`otellix.llm.cost.usd`, `otellix.llm.tokens.input`, `otellix.llm.tokens.output`, `otellix.llm.latency.ms` and so on) has `user_id`, `project_id` and `feature_id` labels by default, plus `user_attributed`, which is `"true"` or `"false"`. Unattributed calls have `user_attributed="false"` and an empty `user_id=""`.
+
+`user_id` can be turned off when you have many users. See [Metric Labels & Cardinality](metric-labels.md).
 
 #### Metric names in Prometheus
 
@@ -86,6 +88,7 @@ The Prometheus exporter turns the OpenTelemetry names into these Prometheus name
 | `otellix.llm.tokens.input` / `.output` | `otellix_llm_tokens_input_total` / `otellix_llm_tokens_output_total` |
 | `otellix.llm.tokens.cache_read` / `.cache_write` | `otellix_llm_tokens_cache_read_total` / `otellix_llm_tokens_cache_write_total` |
 | `otellix.llm.errors.total` | `otellix_llm_errors_total_total` |
+| `otellix.llm.calls.unpriced` | `otellix_llm_calls_unpriced_total` (see [Unpriced Models](unpriced-models.md)) |
 | `otellix.llm.latency.ms` (histogram) | `otellix_llm_latency_ms_milliseconds_bucket`, `_count`, `_sum` |
 
 > **Prometheus 3 keeps the dots by default.** It stores these metrics under their original names, e.g. `otellix.llm.cost.usd_total`, so queries using the underscore names above return nothing. To get the underscore names, which every query in these docs and the bundled dashboard uses, add this to the `global` section of `prometheus.yml`:
@@ -110,7 +113,7 @@ Cost per feature:
 sum by (feature_id) (increase(otellix_llm_cost_usd_total[1d]))
 ```
 
-> **Cardinality:** each distinct `user_id` creates a new time series. That's fine for thousands of users, but with millions it can strain Prometheus. If it does, rely on traces for per-user detail and aggregate metrics by `project_id` or `feature_id`.
+> **Cardinality:** each distinct `user_id` creates a new time series. That's fine for thousands of users, but with many more it can strain Prometheus. Turn the label off with `otellix.SetMetricLabels`, and rely on traces for per-user detail. See [Metric Labels & Cardinality](metric-labels.md).
 
 ### In budgets
 
@@ -146,7 +149,7 @@ Then group by `llm.feature_id` or `http.route` to see which code paths are respo
 In Prometheus, the number of calls with no user over the last day:
 
 ```promql
-sum(increase(otellix_llm_latency_ms_milliseconds_count{user_id=""}[1d])) or vector(0)
+sum(increase(otellix_llm_latency_ms_milliseconds_count{user_attributed="false"}[1d])) or vector(0)
 ```
 
 This is the number to watch over time. A count that suddenly climbs usually means a new code path has started making LLM calls without passing the user. The latency histogram records every call, including failed ones, so its `_count` is a call counter. `or vector(0)` makes the query show `0` instead of "No data" when every call is attributed.
@@ -156,7 +159,7 @@ This is the number to watch over time. A count that suddenly climbs usually mean
 The share of spend with no user over the last day:
 
 ```promql
-sum(increase(otellix_llm_cost_usd_total{user_id=""}[1d]))
+sum(increase(otellix_llm_cost_usd_total{user_attributed="false"}[1d]))
   /
 sum(increase(otellix_llm_cost_usd_total[1d]))
 ```
@@ -164,7 +167,7 @@ sum(increase(otellix_llm_cost_usd_total[1d]))
 And which features it comes from:
 
 ```promql
-sum by (feature_id) (increase(otellix_llm_cost_usd_total{user_id=""}[1d]))
+sum by (feature_id) (increase(otellix_llm_cost_usd_total{user_attributed="false"}[1d]))
 ```
 
 #### On the bundled Grafana dashboard
@@ -183,9 +186,9 @@ A Prometheus alert on the same signal, for example when the count doubles day ov
 ```yaml
 - alert: OtellixUnattributedCallsRising
   expr: |
-    sum(increase(otellix_llm_latency_ms_milliseconds_count{user_id=""}[1d]))
-      > 2 * (sum(increase(otellix_llm_latency_ms_milliseconds_count{user_id=""}[1d] offset 1d)) or vector(0))
-    and sum(increase(otellix_llm_latency_ms_milliseconds_count{user_id=""}[1d])) > 50
+    sum(increase(otellix_llm_latency_ms_milliseconds_count{user_attributed="false"}[1d]))
+      > 2 * (sum(increase(otellix_llm_latency_ms_milliseconds_count{user_attributed="false"}[1d] offset 1d)) or vector(0))
+    and sum(increase(otellix_llm_latency_ms_milliseconds_count{user_attributed="false"}[1d])) > 50
   labels:
     severity: warning
   annotations:

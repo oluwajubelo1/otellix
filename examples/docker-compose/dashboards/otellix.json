@@ -145,7 +145,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum(increase(otellix_llm_latency_ms_milliseconds_count{user_id=\"\"}[1d])) or vector(0)",
+          "expr": "sum(increase(otellix_llm_latency_ms_milliseconds_count{user_attributed=\"false\"}[1d])) or vector(0)",
           "legendFormat": "calls with no user",
           "refId": "A"
         }
@@ -177,7 +177,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "(sum(increase(otellix_llm_cost_usd_total{user_id=\"\"}[1d])) or vector(0)) / sum(increase(otellix_llm_cost_usd_total[1d]))",
+          "expr": "(sum(increase(otellix_llm_cost_usd_total{user_attributed=\"false\"}[1d])) or vector(0)) / sum(increase(otellix_llm_cost_usd_total[1d]))",
           "refId": "A"
         }
       ]
