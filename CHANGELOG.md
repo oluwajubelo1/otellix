@@ -2,6 +2,18 @@
 
 All notable changes to Otellix are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Otellix uses [Semantic Versioning](https://semver.org/). For releases before v1.6.0, see the [GitHub releases](https://github.com/oluwajubelo1/otellix/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- **Streams read the budget store on every token.** The mid-stream budget check made two store reads per token, which with Redis meant thousands of network round trips for one long stream. It now reads spend on the first token and re-reads only when the stream's cost would use up the headroom it saw, or once a second. The cutoff is still exact for a single stream.
+- **OpenAI cached tokens were charged twice.** OpenAI's `prompt_tokens` includes cached tokens, and the OpenAI provider reported them both as input (full price) and as cache reads. Input now excludes them, so cached prompts cost what OpenAI bills.
+- Streams now count prompt-cache tokens. They were ignored, so streamed calls with Anthropic or OpenAI prompt caching were costed as if nothing was cached.
+
+### Added
+
+- `CacheReadTokens` and `CacheWriteTokens` on `providers.StreamEvent`, filled in by the Anthropic and OpenAI providers.
+
 ## [1.6.0] - 2026-10-24
 
 ### Fixed
@@ -26,4 +38,5 @@ All notable changes to Otellix are documented here. The format follows [Keep a C
 - The bundled Grafana dashboard's unattributed panels filter on `user_attributed="false"` instead of `user_id=""`.
 - `BudgetExceededError.CurrentSpend` and `BudgetStatus.Usage` include the holds of calls still in flight.
 
+[Unreleased]: https://github.com/oluwajubelo1/otellix/compare/v1.6.0...HEAD
 [1.6.0]: https://github.com/oluwajubelo1/otellix/compare/v1.5.0...v1.6.0
