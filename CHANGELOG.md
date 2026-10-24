@@ -2,6 +2,12 @@
 
 All notable changes to Otellix are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Otellix uses [Semantic Versioning](https://semver.org/). For releases before v1.6.0, see the [GitHub releases](https://github.com/oluwajubelo1/otellix/releases).
 
+## [Unreleased]
+
+### Added
+
+- **SDK middleware for the official OpenAI and Anthropic Go SDKs.** `otellixopenai.Middleware(...)` and `otellixanthropic.Middleware(...)` plug into `option.WithMiddleware`, so existing SDK calls are traced, costed and budgeted with no change to the code making them. They cover OpenAI Chat Completions and Responses, and Anthropic Messages, streaming or not. Blocked calls return Otellix's error without being sent or retried, streams are cut off mid-stream when the budget runs out, and `FallbackDowngrade` rewrites the model in the request. See [SDK Middleware](docs/sdk-middleware.md).
+
 ## [1.6.1] - 2026-10-24
 
 ### Fixed
@@ -38,5 +44,6 @@ All notable changes to Otellix are documented here. The format follows [Keep a C
 - The bundled Grafana dashboard's unattributed panels filter on `user_attributed="false"` instead of `user_id=""`.
 - `BudgetExceededError.CurrentSpend` and `BudgetStatus.Usage` include the holds of calls still in flight.
 
+[Unreleased]: https://github.com/oluwajubelo1/otellix/compare/v1.6.1...HEAD
 [1.6.1]: https://github.com/oluwajubelo1/otellix/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/oluwajubelo1/otellix/compare/v1.5.0...v1.6.0
