@@ -4,15 +4,16 @@ All notable changes to Otellix are documented here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- **SDK middleware for the official OpenAI and Anthropic Go SDKs.** `otellixopenai.Middleware(...)` and `otellixanthropic.Middleware(...)` plug into `option.WithMiddleware`, so existing SDK calls are traced, costed and budgeted with no change to the code making them. They cover OpenAI Chat Completions and Responses, and Anthropic Messages, streaming or not. Blocked calls return Otellix's error without being sent or retried, streams are cut off mid-stream when the budget runs out, and `FallbackDowngrade` rewrites the model in the request. See [SDK Middleware](docs/sdk-middleware.md).
+- `CacheReadTokens` and `CacheWriteTokens` on `providers.StreamEvent`, filled in by the Anthropic and OpenAI providers.
+
 ### Fixed
 
 - **Streams read the budget store on every token.** The mid-stream budget check made two store reads per token, which with Redis meant thousands of network round trips for one long stream. It now reads spend on the first token and re-reads only when the stream's cost would use up the headroom it saw, or once a second. The cutoff is still exact for a single stream.
 - **OpenAI cached tokens were charged twice.** OpenAI's `prompt_tokens` includes cached tokens, and the OpenAI provider reported them both as input (full price) and as cache reads. Input now excludes them, so cached prompts cost what OpenAI bills.
 - Streams now count prompt-cache tokens. They were ignored, so streamed calls with Anthropic or OpenAI prompt caching were costed as if nothing was cached.
-
-### Added
-
-- `CacheReadTokens` and `CacheWriteTokens` on `providers.StreamEvent`, filled in by the Anthropic and OpenAI providers.
 
 ## [1.6.0] - 2026-10-24
 

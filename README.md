@@ -25,6 +25,7 @@ Most LLM observability tools tell you what you spent *after* the money is gone. 
 
 ## ⚡ Key Features
 
+- **🧩 One-Line SDK Middleware**: Already using the official OpenAI or Anthropic Go SDK? Add `option.WithMiddleware(otellixopenai.Middleware(...))` and every call is traced, costed and budgeted. Your calls don't change.
 - **⛓️ LangChainGo Integration**: Drop-in `callbacks.Handler` for LangChainGo. Automatic token, cost, and span capture for chains.
 - **🔌 Zero-Config Attribution**: Automatically capture `user_id` and `project_id` from Gin, Echo or Fiber middleware. No more manual context plumbing.
 - **🗄️ Redis Budget Store**: Distributed budget enforcement for high-availability production clusters.
@@ -140,6 +141,7 @@ Otellix populates your spans with industry-standard attributes:
 *   [**Unpriced Models**](docs/unpriced-models.md) — Making sure models with no price still count against budgets.
 *   [**Cost Attribution**](docs/attribution.md) — Who spent what, and capping calls with no user.
 *   [**Metric Labels & Cardinality**](docs/metric-labels.md) — Dropping the `user_id` label so metrics scale to many users.
+*   [**SDK Middleware**](docs/sdk-middleware.md) — Trace and budget existing OpenAI and Anthropic SDK clients with one option.
 *   [**Integrations**](docs/integrations.md) — LangChainGo setup.
 *   [**Middleware & Identity**](docs/middleware.md) — Gin, Echo and Fiber attribution, verified identity.
 *   [**Prompt Caching**](docs/caching.md) — ROI analysis and tracking.
