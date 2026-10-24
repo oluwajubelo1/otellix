@@ -43,10 +43,11 @@ type StreamEvent struct {
 A unique feature of Otellix is the ability to **abort a stream mid-flight** if a budget limit is reached. This is especially useful for preventing runaway generation costs for untrusted users.
 
 ### How it works:
-1.  **Before start**: Otellix checks if the user/project has *any* remaining budget. If they are already over, the stream never starts.
+1.  **Before start**: Otellix estimates the stream's cost from the prompt and expected output, and reserves it against the budget. If there isn't room for the estimate, the stream never starts. See [Budget Reservations & Cost Estimates](budget-reservations.md).
 2.  **During start**: Otellix starts the LLM stream.
 3.  **During Recv**: On every `Recv()` call, Otellix calculates the cumulative cost based on the tokens received so far.
 4.  **If budget is hit**: Otellix closes the underlying provider stream and returns a `BudgetExceededError`.
+5.  **On `Close()`**: the actual cost is recorded and the reservation released. Always close streams, usually with `defer stream.Close()`.
 
 ### Why this matters:
 Traditional SDKs only track costs *after* the stream finishes. A single malicious or long-running prompt can cost significantly more than the user’s daily limit before you have a chance to stop it. Otellix stops the leak **before it happens**.

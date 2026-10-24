@@ -31,6 +31,7 @@ var (
 	errorsCount       metric.Int64Counter
 	cacheReadCount    metric.Int64Counter
 	cacheWriteCount   metric.Int64Counter
+	unpricedCount     metric.Int64Counter
 )
 
 // initMetrics creates OTel metric instruments. Safe to call multiple times.
@@ -66,6 +67,10 @@ func initMetrics() {
 			metric.WithDescription("Total tokens used to create/update cache"),
 			metric.WithUnit("{token}"),
 		)
+		unpricedCount, _ = meter.Int64Counter("otellix.llm.calls.unpriced",
+			metric.WithDescription("Calls to models with no pricing, whose cost counts as $0 unless BudgetConfig.UnpricedModelPrice is set"),
+			metric.WithUnit("{call}"),
+		)
 	})
 }
 
@@ -97,23 +102,28 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	cfg.fillAttributionFromContext(ctx)
 
 	var enforcer *BudgetEnforcer
+	var reservation *Reservation
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)
-		estimatedCost := EstimateCost(cfg.Provider, cfg.Model, 500) // assume ~500 output tokens
-		allowed, action := enforcer.Check(ctx, cfg.UserID, cfg.ProjectID, estimatedCost)
+		if err := cfg.unpricedError(); err != nil {
+			return providers.CallResult{}, err
+		}
+
+		// Hold the estimated cost while the call runs, so concurrent calls
+		// can't all pass the check before any of them records its spend.
+		var allowed bool
+		reservation, allowed = enforcer.Reserve(ctx, cfg.UserID, cfg.ProjectID, cfg.estimateCost(params))
+		defer reservation.Release(ctx)
 
 		if !allowed {
-			switch action {
+			switch cfg.BudgetConfig.FallbackAction {
 			case FallbackBlock:
 				return providers.CallResult{}, enforcer.BudgetError(cfg.UserID, cfg.ProjectID)
 			case FallbackDowngrade:
-				fallbackModel := cfg.BudgetConfig.FallbackModel
-				if fallbackModel == "" {
-					fallbackModel = cfg.FallbackModel
-				}
-				if fallbackModel != "" {
-					cfg.Model = fallbackModel
-					params.Model = fallbackModel
+				if cfg.downgrade(&params) {
+					if err := cfg.unpricedError(); err != nil {
+						return providers.CallResult{}, err
+					}
 				}
 				// FallbackNotify: proceed, we'll add a warning event after the call.
 			}
@@ -136,17 +146,34 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 		if cached, ok := cfg.CacheConfig.store().Get(ctx, cacheKey); ok {
 			return cached, nil
 		}
+		// Only the caller whose call runs records spend. The others are
+		// charged nothing, and their holds are released when Trace returns.
 		return collapse(ctx, cacheKey, func() (providers.CallResult, error) {
-			return traceCall(ctx, provider, params, cfg, enforcer, cacheKey)
+			return traceCall(ctx, provider, params, cfg, enforcer, reservation, cacheKey)
 		})
 	}
 
-	return traceCall(ctx, provider, params, cfg, enforcer, "")
+	return traceCall(ctx, provider, params, cfg, enforcer, reservation, "")
+}
+
+// downgrade switches the call to the budget's fallback model, if one is set,
+// and reports whether it did.
+func (c *Config) downgrade(params *providers.CallParams) bool {
+	fallbackModel := c.BudgetConfig.FallbackModel
+	if fallbackModel == "" {
+		fallbackModel = c.FallbackModel
+	}
+	if fallbackModel == "" {
+		return false
+	}
+	c.Model = fallbackModel
+	params.Model = fallbackModel
+	return true
 }
 
 // traceCall makes the provider call inside a span and records its metrics,
 // budget spend and analytics. cacheKey is empty when caching is off.
-func traceCall(ctx context.Context, provider providers.Provider, params providers.CallParams, cfg *Config, enforcer *BudgetEnforcer, cacheKey string) (providers.CallResult, error) {
+func traceCall(ctx context.Context, provider providers.Provider, params providers.CallParams, cfg *Config, enforcer *BudgetEnforcer, reservation *Reservation, cacheKey string) (providers.CallResult, error) {
 	// Hook 2: Pre-call anomaly block check.
 	if cfg.AnomalyConfig != nil && cfg.AnomalyConfig.Action == AnomalyBlock {
 		estimated := EstimateCost(cfg.Provider, cfg.Model, 500)
@@ -185,18 +212,14 @@ func traceCall(ctx context.Context, provider providers.Provider, params provider
 		span.SetAttributes(attribute.String("llm.prompt_fingerprint", fingerprint))
 	}
 
+	cfg.flagUnpriced(ctx, span)
+
 	start := time.Now()
 	result, err := provider.Call(ctx, params)
 	latencyMs := float64(time.Since(start).Milliseconds())
 
 	// Metric labels shared by all instruments.
-	metricAttrs := metric.WithAttributes(
-		attribute.String("provider", cfg.Provider),
-		attribute.String("model", cfg.Model),
-		attribute.String("feature_id", cfg.FeatureID),
-		attribute.String("user_id", cfg.UserID),
-		attribute.String("project_id", cfg.ProjectID),
-	)
+	metricAttrs := metricAttributes(cfg)
 
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
@@ -229,7 +252,8 @@ func traceCall(ctx context.Context, provider providers.Provider, params provider
 		attribute.Float64("llm.latency_ms", latencyMs),
 	)
 
-	costUSD := CalculateCost(cfg.Provider, cfg.Model, result)
+	pricing, _ := cfg.pricing()
+	costUSD := pricing.cost(result)
 	span.SetAttributes(attribute.Float64("llm.cost_usd", costUSD))
 
 	inputTokensCount.Add(ctx, result.InputTokens, metricAttrs)
@@ -259,7 +283,10 @@ func traceCall(ctx context.Context, provider providers.Provider, params provider
 	})
 
 	if enforcer != nil {
+		// Record the actual cost before releasing the hold, so the spend is
+		// never briefly uncounted.
 		enforcer.Record(ctx, cfg.UserID, cfg.ProjectID, costUSD)
+		reservation.Release(ctx)
 
 		// If budget was exceeded but action was FallbackNotify, add a warning event.
 		remaining := enforcer.Remaining(cfg.UserID, cfg.ProjectID)

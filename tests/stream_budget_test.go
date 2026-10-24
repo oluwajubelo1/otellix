@@ -21,12 +21,15 @@ func TestTraceStreamCutsOffMidStreamWhenBudgetRunsOut(t *testing.T) {
 		return otellix.CalculateCost("openai", model, providers.CallResult{OutputTokens: outputTokens})
 	}
 
-	// Room for exactly 2 output tokens: the 3rd goes over the limit.
+	// Room for exactly 2 output tokens: the 3rd goes over the limit. The
+	// stream starts by holding an estimate of 1 output token, so the cutoff
+	// comes from the tokens actually streamed rather than the estimate.
 	store := otellix.NewInMemoryBudgetStore(24 * time.Hour)
 	budget := &otellix.BudgetConfig{
-		PerUserLimit:   (costOf(2) + costOf(3)) / 2,
-		FallbackAction: otellix.FallbackBlock,
-		Store:          store,
+		PerUserLimit:          (costOf(2) + costOf(3)) / 2,
+		FallbackAction:        otellix.FallbackBlock,
+		Store:                 store,
+		EstimatedOutputTokens: 1,
 	}
 
 	// MockProvider streams the 5 tokens "mock", " ", "stream", " ", "response".

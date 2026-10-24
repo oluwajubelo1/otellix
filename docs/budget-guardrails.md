@@ -6,6 +6,8 @@ Related guides:
 
 - [Budget Windows](budget-windows.md): rolling, daily and monthly periods, time zones and resets.
 - [Cost Attribution](attribution.md): how each call gets its user and project, and how to cap calls with no user.
+- [Budget Reservations & Cost Estimates](budget-reservations.md): how concurrent calls are kept within a limit, and how a call's cost is estimated.
+- [Unpriced Models](unpriced-models.md): making sure models with no price still count.
 
 ---
 
@@ -54,6 +56,10 @@ The central policy object. It sets the limits, what happens when one is hit, and
 | `Store` | `BudgetStore` | in-memory | Where spend is kept. See [Budget stores](#2-budget-stores-otellixbudgetstore). |
 | `Window` | `*BudgetWindow` | rolling 24h | The window for the **default** in-memory store. Ignored when `Store` is set. See [Budget Windows](budget-windows.md). |
 | `ResetInterval` | `time.Duration` | `24h` | Older way to set a rolling window for the default store. Ignored when `Store` or `Window` is set. |
+| `EstimatedOutputTokens` | `int64` | `500` | Output tokens the pre-call estimate assumes, capped at `params.MaxTokens`. See [Cost estimates](budget-reservations.md#how-the-estimate-is-worked-out). |
+| `ReserveWorstCase` | `bool` | `false` | Assume every call produces its full `params.MaxTokens`, so concurrent calls can never overshoot. See [Choosing how strict to be](budget-reservations.md#choosing-how-strict-to-be). |
+| `UnpricedModel` | `UnpricedModelAction` | `UnpricedAllow` | `UnpricedBlock` refuses calls to models with no price. See [Unpriced Models](unpriced-models.md). |
+| `UnpricedModelPrice` | `*PricingEntry` | `nil` | Price used for models with no price of their own, so they still count. |
 | `PerUserDailyLimit` | `float64` | | **Deprecated:** use `PerUserLimit`. |
 | `PerProjectDailyLimit` | `float64` | | **Deprecated:** use `PerProjectLimit`. |
 
@@ -102,7 +108,7 @@ config := &otellix.BudgetConfig{
 
 The prefix (`"otellix:budget"`) namespaces the keys. Use a different prefix for each environment or app that shares a Redis instance. Keys look like `otellix:budget:user:<id>`, `otellix:budget:project:<id>` and `otellix:budget:unattributed`.
 
-You can also write your own store by implementing the `BudgetStore` interface: `GetSpend`, `AddSpend` and `GetResetTime`.
+You can also write your own store by implementing the `BudgetStore` interface: `GetSpend`, `AddSpend` and `GetResetTime`. Also implement `BudgetReserver` (`Reserve` and `Release`), or concurrent calls can overshoot your limits. See [Writing your own store](budget-reservations.md#writing-your-own-store).
 
 ### 3. Budget windows
 
@@ -115,14 +121,16 @@ The window decides which spend counts and when it resets: a rolling period such 
 For `otellix.Trace`:
 
 1. Otellix works out the call's user and project from the options or context. See [Cost Attribution](attribution.md#precedence).
-2. It estimates the call's cost from the model's price, assuming about 500 output tokens.
-3. It checks each limit that applies:
+2. If the model has no price and `UnpricedModel` is `UnpricedBlock`, it returns an `UnpricedModelError`. See [Unpriced Models](unpriced-models.md).
+3. It estimates the call's cost from the length of the prompt and the expected output (500 tokens by default, capped at `MaxTokens`). See [Cost estimates](budget-reservations.md#how-the-estimate-is-worked-out).
+4. It checks each limit that applies:
    - the user's `PerUserLimit`, or `UnattributedLimit` if there's no user;
    - the project's `PerProjectLimit`, if there's a project.
 
-   A limit is exceeded if *current spend + estimate > limit*.
-4. If any limit is exceeded, the `FallbackAction` runs.
-5. If the call goes ahead, its **actual** cost is recorded against the user (or the unattributed budget) and the project.
+   A limit is exceeded if *current spend + estimate > limit*. Current spend includes calls still in flight.
+5. If every limit has room, it **reserves** the estimate against them in the same atomic step, so calls made at the same time can't all slip through. See [Budget Reservations](budget-reservations.md).
+6. If any limit is exceeded, the `FallbackAction` runs.
+7. If the call goes ahead, its **actual** cost is recorded against the user (or the unattributed budget) and the project, and the reservation is released.
 
 For `otellix.TraceStream`, see [Streaming](#real-time-streaming-cutoff) below.
 
@@ -193,7 +201,7 @@ In a web app, let [middleware](middleware.md) set the user for you, from verifie
 
 ### Real-time streaming cutoff
 
-When using `TraceStream`, Otellix checks the budget before the stream starts. It then tracks the cumulative cost of the tokens received. If the budget is hit **mid-stream**, Otellix stops the stream and returns a `BudgetExceededError` from `Recv()`. Streams take their user and project from the context like `Trace` does. See [Streaming](streaming.md).
+When using `TraceStream`, Otellix checks the budget and reserves the estimated cost before the stream starts. It then tracks the cumulative cost of the tokens received. If the budget is hit **mid-stream**, Otellix stops the stream and returns a `BudgetExceededError` from `Recv()`. Streams take their user and project from the context like `Trace` does. See [Streaming](streaming.md).
 
 ## Dynamic prompt optimization
 

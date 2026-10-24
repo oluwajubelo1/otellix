@@ -2,6 +2,8 @@ package redis
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -145,5 +147,72 @@ func TestRedisBudgetStoreCalendarMonth(t *testing.T) {
 	}
 	if ttl < 31*24*time.Hour {
 		t.Errorf("key TTL %v is shorter than a month", ttl)
+	}
+}
+
+// TestRedisBudgetStoreReserve checks that concurrent reservations, as from
+// several app instances, can't together hold more than a limit, and that a
+// reservation must fit every limit it is checked against.
+func TestRedisBudgetStoreReserve(t *testing.T) {
+	client := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Skip("Redis not available on localhost:6379, skipping integration test")
+	}
+
+	store := NewRedisBudgetStore(client, "test:otellix:reserve", time.Hour)
+	userKey, projectKey := "user:test-reserve", "project:test-reserve"
+	for _, k := range []string{userKey, projectKey} {
+		client.Del(ctx, "test:otellix:reserve:"+k)
+		defer client.Del(ctx, "test:otellix:reserve:"+k)
+	}
+
+	// Room for 3 holds of $0.10 within the $0.35 user limit.
+	limits := []otellix.BudgetLimit{{Key: userKey, Limit: 0.35}, {Key: projectKey, Limit: 100}}
+	var wg sync.WaitGroup
+	var held atomic.Int32
+	ids := make(chan string, 20)
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id, ok, err := store.Reserve(ctx, 0.10, limits)
+			if err != nil {
+				t.Errorf("Reserve: %v", err)
+				return
+			}
+			if ok {
+				held.Add(1)
+				ids <- id
+			}
+		}()
+	}
+	wg.Wait()
+	close(ids)
+
+	if held.Load() != 3 {
+		t.Fatalf("expected 3 reservations to fit, got %d", held.Load())
+	}
+	if spend := store.GetSpend(ctx, projectKey); spend < 0.2999 || spend > 0.3001 {
+		t.Errorf("holds should count towards the project too: expected $0.30, got $%.4f", spend)
+	}
+
+	// The project limit is the tighter one here, so nothing is held anywhere.
+	if _, ok, _ := store.Reserve(ctx, 0.01, []otellix.BudgetLimit{{Key: userKey, Limit: 100}, {Key: projectKey, Limit: 0.30}}); ok {
+		t.Error("a reservation over the project limit should fail")
+	}
+
+	keys := []string{userKey, projectKey}
+	for id := range ids {
+		store.Release(ctx, id, keys)
+	}
+	for _, k := range keys {
+		if spend := store.GetSpend(ctx, k); spend != 0 {
+			t.Errorf("%s: expected no spend after releasing every hold, got $%.4f", k, spend)
+		}
 	}
 }

@@ -135,8 +135,11 @@ Otellix populates your spans with industry-standard attributes:
 ## 📖 Deep Dives
 *   [**Architecture**](docs/architecture.md) — How Otellix fits into the OTel ecosystem.
 *   [**Budget Guardrails**](docs/budget-guardrails.md) — Limits, fallback actions, Redis & InMemory stores.
+*   [**Budget Reservations & Cost Estimates**](docs/budget-reservations.md) — Keeping concurrent calls within a limit, and how costs are estimated.
 *   [**Budget Windows**](docs/budget-windows.md) — Rolling, daily and monthly budgets, time zones and resets.
+*   [**Unpriced Models**](docs/unpriced-models.md) — Making sure models with no price still count against budgets.
 *   [**Cost Attribution**](docs/attribution.md) — Who spent what, and capping calls with no user.
+*   [**Metric Labels & Cardinality**](docs/metric-labels.md) — Dropping the `user_id` label so metrics scale to many users.
 *   [**Integrations**](docs/integrations.md) — LangChainGo setup.
 *   [**Middleware & Identity**](docs/middleware.md) — Gin, Echo and Fiber attribution, verified identity.
 *   [**Prompt Caching**](docs/caching.md) — ROI analysis and tracking.
