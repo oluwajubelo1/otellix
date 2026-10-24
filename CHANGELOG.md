@@ -2,7 +2,7 @@
 
 All notable changes to Otellix are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Otellix uses [Semantic Versioning](https://semver.org/). For releases before v1.6.0, see the [GitHub releases](https://github.com/oluwajubelo1/otellix/releases).
 
-## [Unreleased]
+## [1.6.1] - 2026-10-24
 
 ### Fixed
 
@@ -38,5 +38,5 @@ All notable changes to Otellix are documented here. The format follows [Keep a C
 - The bundled Grafana dashboard's unattributed panels filter on `user_attributed="false"` instead of `user_id=""`.
 - `BudgetExceededError.CurrentSpend` and `BudgetStatus.Usage` include the holds of calls still in flight.
 
-[Unreleased]: https://github.com/oluwajubelo1/otellix/compare/v1.6.0...HEAD
+[1.6.1]: https://github.com/oluwajubelo1/otellix/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/oluwajubelo1/otellix/compare/v1.5.0...v1.6.0
