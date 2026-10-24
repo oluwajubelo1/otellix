@@ -74,18 +74,17 @@ func (p *Provider) Call(ctx context.Context, params providers.CallParams) (provi
 		return providers.CallResult{}, classifyError(model, err)
 	}
 
-	// Map response to standardised CallResult.
-	result := providers.CallResult{
-		InputTokens:  int64(resp.Usage.PromptTokens),
-		OutputTokens: int64(resp.Usage.CompletionTokens),
-		Model:        resp.Model,
-		RawResponse:  resp,
-	}
-
-	// OpenAI reports cached tokens (hits) in prompt_tokens_details.
-	result.CacheReadTokens = int64(resp.Usage.PromptTokensDetails.CachedTokens)
-
-	return result, nil
+	// Map response to standardised CallResult. OpenAI's prompt_tokens
+	// includes cached tokens, which are priced separately, so they are
+	// taken out of InputTokens to avoid charging them twice.
+	cached := int64(resp.Usage.PromptTokensDetails.CachedTokens)
+	return providers.CallResult{
+		InputTokens:     int64(resp.Usage.PromptTokens) - cached,
+		OutputTokens:    int64(resp.Usage.CompletionTokens),
+		CacheReadTokens: cached,
+		Model:           resp.Model,
+		RawResponse:     resp,
+	}, nil
 }
 
 // classifyError wraps raw errors with typed Otellix error types.
@@ -179,7 +178,8 @@ func (s *openaiStream) Recv() (providers.StreamEvent, error) {
 
 	// OpenAI usually sends usage in the last chunk.
 	if chunk.Usage.PromptTokens > 0 {
-		event.InputTokens = int64(chunk.Usage.PromptTokens)
+		event.CacheReadTokens = int64(chunk.Usage.PromptTokensDetails.CachedTokens)
+		event.InputTokens = int64(chunk.Usage.PromptTokens) - event.CacheReadTokens
 		event.OutputTokens = int64(chunk.Usage.CompletionTokens)
 	}
 
