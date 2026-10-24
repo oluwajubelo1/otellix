@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -108,5 +109,54 @@ func TestTraceStreamNotifyDoesNotCutOff(t *testing.T) {
 	}
 	if tokens != 5 {
 		t.Errorf("expected all 5 tokens, got %d", tokens)
+	}
+}
+
+// countingStore counts GetSpend calls on an in-memory store.
+type countingStore struct {
+	*otellix.InMemoryBudgetStore
+	mu   sync.Mutex
+	gets int
+}
+
+func (s *countingStore) GetSpend(ctx context.Context, key string) float64 {
+	s.mu.Lock()
+	s.gets++
+	s.mu.Unlock()
+	return s.InMemoryBudgetStore.GetSpend(ctx, key)
+}
+
+// TestTraceStreamDoesNotReadStoreEveryToken checks that a stream well
+// within budget reads spend once, not on every token. With Redis, every
+// read is a network round trip.
+func TestTraceStreamDoesNotReadStoreEveryToken(t *testing.T) {
+	store := &countingStore{InMemoryBudgetStore: otellix.NewInMemoryBudgetStore(24 * time.Hour)}
+	budget := &otellix.BudgetConfig{PerUserLimit: 10, FallbackAction: otellix.FallbackBlock, Store: store}
+
+	// MockProvider streams 5 tokens.
+	mock := &providers.MockProvider{ProviderName: "openai"}
+	stream, err := otellix.TraceStream(context.Background(), mock, providers.CallParams{Model: "gpt-4o"},
+		otellix.WithUserID("reader"), otellix.WithBudgetConfig(budget))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	store.mu.Lock()
+	store.gets = 0 // ignore reads made before the stream started
+	store.mu.Unlock()
+	tokens := 0
+	for {
+		if _, err := stream.Recv(); err != nil {
+			break
+		}
+		tokens++
+	}
+
+	if tokens != 5 {
+		t.Fatalf("expected 5 tokens, got %d", tokens)
+	}
+	if store.gets != 1 {
+		t.Errorf("expected 1 spend read for the whole stream, got %d", store.gets)
 	}
 }

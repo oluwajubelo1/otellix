@@ -23,10 +23,16 @@ type Stream struct {
 	pricing     PricingEntry
 
 	// Aggregated metrics
-	inputTokens  int64
-	outputTokens int64
-	costUSD      float64
-	start        time.Time
+	inputTokens      int64
+	outputTokens     int64
+	cacheReadTokens  int64
+	cacheWriteTokens int64
+	costUSD          float64
+	start            time.Time
+
+	// Budget headroom at the last read of the store, and when that was.
+	headroom  float64
+	checkedAt time.Time
 
 	closed bool
 }
@@ -135,6 +141,12 @@ func (s *Stream) Recv() (providers.StreamEvent, error) {
 	if evt.InputTokens > 0 {
 		s.inputTokens = evt.InputTokens
 	}
+	if evt.CacheReadTokens > 0 {
+		s.cacheReadTokens = evt.CacheReadTokens
+	}
+	if evt.CacheWriteTokens > 0 {
+		s.cacheWriteTokens = evt.CacheWriteTokens
+	}
 	if evt.OutputTokens > 0 {
 		s.outputTokens = evt.OutputTokens
 	} else if evt.Token != "" {
@@ -144,23 +156,46 @@ func (s *Stream) Recv() (providers.StreamEvent, error) {
 	}
 
 	// Update cost progressively
-	s.costUSD = s.pricing.cost(providers.CallResult{
-		InputTokens:  s.inputTokens,
-		OutputTokens: s.outputTokens,
-	})
+	s.costUSD = s.pricing.cost(s.result())
 
-	if s.enforcer != nil {
-		// Spend already includes this stream's own hold, so check only the
-		// cost beyond it.
-		allowed, action := s.enforcer.Check(s.ctx, s.cfg.UserID, s.cfg.ProjectID, s.costUSD-s.reservation.held())
-		if !allowed && action == FallbackBlock {
-			s.span.AddEvent("budget.aborted")
-			_ = s.Close() // the budget error is what the caller needs
-			return evt, s.enforcer.BudgetError(s.cfg.UserID, s.cfg.ProjectID)
-		}
+	if s.enforcer != nil && s.cfg.BudgetConfig.FallbackAction == FallbackBlock && s.overBudget() {
+		s.span.AddEvent("budget.aborted")
+		_ = s.Close() // the budget error is what the caller needs
+		return evt, s.enforcer.BudgetError(s.cfg.UserID, s.cfg.ProjectID)
 	}
 
 	return evt, nil
+}
+
+// result returns the tokens streamed so far.
+func (s *Stream) result() providers.CallResult {
+	return providers.CallResult{
+		InputTokens:      s.inputTokens,
+		OutputTokens:     s.outputTokens,
+		CacheReadTokens:  s.cacheReadTokens,
+		CacheWriteTokens: s.cacheWriteTokens,
+	}
+}
+
+// streamBudgetRecheck is how often a stream re-reads spend from the budget
+// store while it has headroom, to notice spend by other calls.
+const streamBudgetRecheck = time.Second
+
+// overBudget reports whether the stream's cost so far takes it over budget.
+//
+// It reads spend from the store only on the first token, when the cost
+// would use up the headroom seen at the last read, and at most once per
+// streamBudgetRecheck otherwise, rather than on every token. With a Redis
+// store that is a few round trips per stream instead of two per token.
+func (s *Stream) overBudget() bool {
+	// Spend includes this stream's own hold, so only the cost beyond it counts.
+	extra := s.costUSD - s.reservation.held()
+	if !s.checkedAt.IsZero() && extra <= s.headroom && time.Since(s.checkedAt) < streamBudgetRecheck {
+		return false
+	}
+	s.headroom = s.enforcer.headroom(s.ctx, s.cfg.UserID, s.cfg.ProjectID)
+	s.checkedAt = time.Now()
+	return extra > s.headroom
 }
 
 // Close finalizes the stream, computes total metrics, and ends the trace span.
@@ -178,6 +213,8 @@ func (s *Stream) Close() error {
 	s.span.SetAttributes(
 		attribute.Int64("llm.input_tokens", s.inputTokens),
 		attribute.Int64("llm.output_tokens", s.outputTokens),
+		attribute.Int64("llm.cache_read_tokens", s.cacheReadTokens),
+		attribute.Int64("llm.cache_write_tokens", s.cacheWriteTokens),
 		attribute.Float64("llm.latency_ms", latencyMs),
 		attribute.Float64("llm.cost_usd", s.costUSD),
 	)
@@ -186,6 +223,8 @@ func (s *Stream) Close() error {
 
 	inputTokensCount.Add(s.ctx, s.inputTokens, metricAttrs)
 	outputTokensCount.Add(s.ctx, s.outputTokens, metricAttrs)
+	cacheReadCount.Add(s.ctx, s.cacheReadTokens, metricAttrs)
+	cacheWriteCount.Add(s.ctx, s.cacheWriteTokens, metricAttrs)
 	costCounter.Add(s.ctx, s.costUSD, metricAttrs)
 	latencyHist.Record(s.ctx, latencyMs, metricAttrs)
 
@@ -195,10 +234,7 @@ func (s *Stream) Close() error {
 	}
 
 	if devPrinter != nil {
-		res := providers.CallResult{
-			InputTokens:  s.inputTokens,
-			OutputTokens: s.outputTokens,
-		}
+		res := s.result()
 		devPrinter(s.cfg, &res, s.costUSD, latencyMs, s.enforcer)
 	}
 

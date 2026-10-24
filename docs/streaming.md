@@ -45,7 +45,7 @@ A unique feature of Otellix is the ability to **abort a stream mid-flight** if a
 ### How it works:
 1.  **Before start**: Otellix estimates the stream's cost from the prompt and expected output, and reserves it against the budget. If there isn't room for the estimate, the stream never starts. See [Budget Reservations & Cost Estimates](budget-reservations.md).
 2.  **During start**: Otellix starts the LLM stream.
-3.  **During Recv**: On every `Recv()` call, Otellix calculates the cumulative cost based on the tokens received so far.
+3.  **During Recv**: On every `Recv()` call, Otellix calculates the cumulative cost based on the tokens received so far, including prompt-cache reads and writes. It compares that with the headroom it last read from the budget store, and re-reads the store only when the headroom would run out or once a second, not on every token.
 4.  **If budget is hit**: Otellix closes the underlying provider stream and returns a `BudgetExceededError`.
 5.  **On `Close()`**: the actual cost is recorded and the reservation released. Always close streams, usually with `defer stream.Close()`.
 
