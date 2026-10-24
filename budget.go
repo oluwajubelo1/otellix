@@ -3,6 +3,7 @@ package otellix
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"sync"
@@ -433,6 +434,16 @@ func (e *BudgetEnforcer) Check(ctx context.Context, userID, projectID string, es
 		}
 	}
 	return true, e.config.FallbackAction
+}
+
+// headroom returns how much more can be spent before the tightest limit
+// that applies is exceeded, or +Inf if no limit applies.
+func (e *BudgetEnforcer) headroom(ctx context.Context, userID, projectID string) float64 {
+	headroom := math.Inf(1)
+	for _, l := range e.limits(userID, projectID) {
+		headroom = min(headroom, l.Limit-e.store.GetSpend(ctx, l.Key))
+	}
+	return headroom
 }
 
 // Reservation is spend held against a call's budgets while the call runs,

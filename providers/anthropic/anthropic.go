@@ -163,6 +163,8 @@ func (s *anthropicStream) Recv() (providers.StreamEvent, error) {
 	switch evt.Type {
 	case "message_start":
 		res.InputTokens = evt.Message.Usage.InputTokens
+		res.CacheReadTokens = evt.Message.Usage.CacheReadInputTokens
+		res.CacheWriteTokens = evt.Message.Usage.CacheCreationInputTokens
 	case "message_delta":
 		res.OutputTokens = evt.Usage.OutputTokens
 	case "content_block_delta":

@@ -36,6 +36,30 @@ func TestOpenAICall(t *testing.T) {
 	}
 }
 
+// TestOpenAICallCachedTokens checks that cached prompt tokens, which OpenAI
+// includes in prompt_tokens, are reported as cache reads and not also as
+// input, so they aren't charged twice.
+func TestOpenAICallCachedTokens(t *testing.T) {
+	client := providertest.NewMockClient(providertest.NewJSONResponse(http.StatusOK, map[string]interface{}{
+		"usage":   map[string]interface{}{"prompt_tokens": 1000, "completion_tokens": 20, "prompt_tokens_details": map[string]int{"cached_tokens": 800}},
+		"model":   "gpt-4o",
+		"choices": []map[string]interface{}{{"message": map[string]string{"content": "Hello world"}}},
+	}), nil)
+
+	p := openai.New(option.WithHTTPClient(client), option.WithAPIKey("test-key"))
+	result, err := p.Call(context.Background(), providers.CallParams{
+		Model:    "gpt-4o",
+		Messages: []providers.Message{{Role: "user", Content: "Hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Call failed: %v", err)
+	}
+
+	if result.InputTokens != 200 || result.CacheReadTokens != 800 {
+		t.Errorf("expected 200 uncached input and 800 cached tokens, got %+v", result)
+	}
+}
+
 func TestOpenAIStream(t *testing.T) {
 	// Simulate OpenAI SSE stream
 	sseData := "data: {\"choices\": [{\"delta\": {\"content\": \"Hello\"}}]}\n\n" +

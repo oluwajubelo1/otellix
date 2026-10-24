@@ -113,6 +113,8 @@ The cost: while a call runs, it holds its worst case. A user with $0.95 of a $1.
 
 `TraceStream` reserves the estimate before the stream starts, like `Trace`. While tokens arrive, it also checks the cost so far against the budget. If the stream runs past the budget, `Recv()` returns a `BudgetExceededError` and the stream is closed. On `Close()`, the actual cost is recorded and the hold dropped.
 
+The mid-stream check doesn't read the budget store on every token. It reads spend on the first token, then works out locally how much more the stream can spend. It reads the store again only when the stream's cost would use up that headroom, or once a second to notice spend by other calls. With Redis, a stream makes a few round trips instead of two per token. The cutoff is still exact for a single stream; spend by other calls is noticed within about a second.
+
 Always `Close()` a stream, usually with `defer stream.Close()`. A stream that is never closed keeps its hold until it falls out of the budget window.
 
 ## Request deduplication

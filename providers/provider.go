@@ -61,6 +61,12 @@ type StreamEvent struct {
 	Token        string
 	InputTokens  int64 // Available if provider reports usage mid-stream or at end
 	OutputTokens int64 // Available if provider reports usage mid-stream or at end
+
+	// CacheReadTokens and CacheWriteTokens are the prompt-cache tokens read
+	// and written, when the provider reports them. As in CallResult,
+	// InputTokens doesn't include them.
+	CacheReadTokens  int64
+	CacheWriteTokens int64
 }
 
 // Stream represents an active stream from a provider.
