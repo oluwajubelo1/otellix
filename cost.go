@@ -1,7 +1,14 @@
 package otellix
 
 import (
+	"context"
+	"fmt"
 	"sync"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/oluwajubelo1/otellix/providers"
 )
@@ -175,21 +182,91 @@ var (
 //
 // Returns 0 for unknown provider/model combinations (does not panic).
 func CalculateCost(provider, model string, result providers.CallResult) float64 {
-	entry, ok := GetPricing(provider, model)
-	if !ok {
-		// Check for wildcard ollama pricing.
-		if provider == "ollama" {
-			return 0
-		}
-		return 0
-	}
+	entry, _ := GetPricing(provider, model)
+	return entry.cost(result)
+}
 
-	inputCost := float64(result.InputTokens) * entry.InputPricePerMToken / 1_000_000
-	outputCost := float64(result.OutputTokens) * entry.OutputPricePerMToken / 1_000_000
-	readCacheCost := float64(result.CacheReadTokens) * entry.CacheReadPricePerMToken / 1_000_000
-	writeCacheCost := float64(result.CacheWriteTokens) * entry.CacheWritePricePerMToken / 1_000_000
+// cost returns the USD cost of the tokens in result at this pricing.
+func (e PricingEntry) cost(result providers.CallResult) float64 {
+	inputCost := float64(result.InputTokens) * e.InputPricePerMToken / 1_000_000
+	outputCost := float64(result.OutputTokens) * e.OutputPricePerMToken / 1_000_000
+	readCacheCost := float64(result.CacheReadTokens) * e.CacheReadPricePerMToken / 1_000_000
+	writeCacheCost := float64(result.CacheWriteTokens) * e.CacheWritePricePerMToken / 1_000_000
 
 	return inputCost + outputCost + readCacheCost + writeCacheCost
+}
+
+// EstimateCallCost estimates what a call will cost before it is made: input
+// tokens are estimated from the system prompt and messages, and outputTokens
+// of output are assumed. Returns 0 for unknown provider/model combinations.
+func EstimateCallCost(provider, model string, params providers.CallParams, outputTokens int64) float64 {
+	entry, _ := GetPricing(provider, model)
+	return entry.cost(estimateTokens(params, outputTokens))
+}
+
+// estimateTokens estimates the token counts of a call from its prompt.
+func estimateTokens(params providers.CallParams, outputTokens int64) providers.CallResult {
+	contents := make([]string, len(params.Messages))
+	for i, m := range params.Messages {
+		contents[i] = m.Content
+	}
+	return providers.CallResult{
+		InputTokens:  EstimateTokens(params.SystemPrompt) + EstimateTokensFromMessages(contents),
+		OutputTokens: outputTokens,
+	}
+}
+
+// pricing returns the pricing for the call's model. A model with no pricing
+// of its own uses the budget's UnpricedModelPrice, if set; missing reports
+// that the model isn't in the pricing table either way.
+func (c *Config) pricing() (entry PricingEntry, missing bool) {
+	if entry, ok := GetPricing(c.Provider, c.Model); ok {
+		return entry, false
+	}
+	if c.BudgetConfig != nil && c.BudgetConfig.UnpricedModelPrice != nil {
+		return *c.BudgetConfig.UnpricedModelPrice, true
+	}
+	return PricingEntry{}, true
+}
+
+// unpricedError returns an UnpricedModelError if the call's model has no
+// pricing and the budget blocks such calls.
+func (c *Config) unpricedError() error {
+	bc := c.BudgetConfig
+	if bc == nil || bc.UnpricedModel != UnpricedBlock || bc.UnpricedModelPrice != nil {
+		return nil
+	}
+	if _, missing := c.pricing(); missing {
+		return &UnpricedModelError{Provider: c.Provider, Model: c.Model}
+	}
+	return nil
+}
+
+// estimateCost estimates the cost of a budgeted call before it is made.
+func (c *Config) estimateCost(params providers.CallParams) float64 {
+	entry, _ := c.pricing()
+	return entry.cost(estimateTokens(params, c.BudgetConfig.estimatedOutputTokens(params)))
+}
+
+// unpricedWarned holds the "provider/model" keys already warned about, so
+// each unpriced model is reported once rather than on every call.
+var unpricedWarned sync.Map
+
+// flagUnpriced marks a call to a model with no pricing on its span and in
+// the otellix.llm.calls.unpriced metric, and warns once per model through
+// the OTel error handler.
+func (c *Config) flagUnpriced(ctx context.Context, span trace.Span) {
+	if _, missing := c.pricing(); !missing {
+		return
+	}
+	span.SetAttributes(attribute.Bool("llm.pricing_missing", true))
+	unpricedCount.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("provider", c.Provider),
+		attribute.String("model", c.Model),
+	))
+	if _, warned := unpricedWarned.LoadOrStore(c.Provider+"/"+c.Model, true); !warned {
+		otel.Handle(fmt.Errorf("otellix: no pricing for %s/%s, so its calls are costed at $0; add it with otellix.RegisterModel", c.Provider, c.Model))
+	}
 }
 
 // EstimateCost estimates the cost assuming the given number of output tokens.

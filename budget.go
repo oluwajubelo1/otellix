@@ -3,8 +3,15 @@ package otellix
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/otel"
+
+	"github.com/oluwajubelo1/otellix/providers"
 )
 
 // FallbackAction determines what happens when a budget ceiling is exceeded.
@@ -65,6 +72,73 @@ type BudgetConfig struct {
 
 	// Store is the backing store for budget data. Default: in-memory.
 	Store BudgetStore
+
+	// EstimatedOutputTokens is how many output tokens the pre-call budget
+	// check assumes a call will produce, capped at params.MaxTokens when that
+	// is set. Default: 500. Input tokens are estimated from the prompt.
+	EstimatedOutputTokens int64
+
+	// ReserveWorstCase makes the pre-call check assume every call produces
+	// its full params.MaxTokens of output. Concurrent calls then can never
+	// overshoot a limit together, but a user can be blocked before reaching
+	// it, because each call holds its worst case while it runs. Calls without
+	// MaxTokens use EstimatedOutputTokens.
+	ReserveWorstCase bool
+
+	// UnpricedModel decides what happens when a call uses a model with no
+	// pricing (see RegisterModel). Default: UnpricedAllow.
+	UnpricedModel UnpricedModelAction
+
+	// UnpricedModelPrice is the pricing used for models with no pricing of
+	// their own, so their spend still counts towards budgets. It takes
+	// precedence over UnpricedModel.
+	UnpricedModelPrice *PricingEntry
+}
+
+// UnpricedModelAction determines what happens when a budgeted call uses a
+// model with no pricing, whose cost would otherwise count as $0.
+type UnpricedModelAction int
+
+const (
+	// UnpricedAllow lets the call go ahead. Its cost counts as $0, and it is
+	// flagged with the llm.pricing_missing span attribute and the
+	// otellix.llm.calls.unpriced metric.
+	UnpricedAllow UnpricedModelAction = iota
+
+	// UnpricedBlock returns an UnpricedModelError and never calls the provider.
+	UnpricedBlock
+)
+
+// UnpricedModelError is returned when BudgetConfig.UnpricedModel is
+// UnpricedBlock and a call uses a model with no pricing.
+type UnpricedModelError struct {
+	Provider string
+	Model    string
+}
+
+func (e *UnpricedModelError) Error() string {
+	return fmt.Sprintf("otellix: no pricing for %s/%s, so its cost can't be checked against the budget; add it with otellix.RegisterModel",
+		e.Provider, e.Model)
+}
+
+// defaultEstimatedOutputTokens is the output assumed by the pre-call budget
+// check when BudgetConfig.EstimatedOutputTokens is unset.
+const defaultEstimatedOutputTokens = 500
+
+// estimatedOutputTokens returns the output tokens the pre-call check assumes for params.
+func (c *BudgetConfig) estimatedOutputTokens(params providers.CallParams) int64 {
+	maxTokens := int64(params.MaxTokens)
+	if c.ReserveWorstCase && maxTokens > 0 {
+		return maxTokens
+	}
+	n := c.EstimatedOutputTokens
+	if n <= 0 {
+		n = defaultEstimatedOutputTokens
+	}
+	if maxTokens > 0 && maxTokens < n {
+		return maxTokens
+	}
+	return n
 }
 
 // userLimit returns the per-user limit, falling back to the deprecated field.
@@ -95,6 +169,28 @@ type BudgetStore interface {
 	GetResetTime(ctx context.Context, key string) time.Time
 }
 
+// BudgetLimit is one limit a reservation must fit within.
+type BudgetLimit struct {
+	Key   string  // budget store key, e.g. "user:usr_123"
+	Limit float64 // USD
+}
+
+// BudgetReserver is implemented by budget stores that can check limits and
+// hold spend in one atomic step. Without it, concurrent calls can all pass
+// the budget check before any of them records its spend, and together
+// overshoot the limit. InMemoryBudgetStore and the Redis store implement it.
+type BudgetReserver interface {
+	// Reserve holds amount against every key in limits, but only if each
+	// key's spend plus amount stays within its limit; otherwise it holds
+	// nothing and returns ok=false. A hold counts as spend until it is
+	// released or falls out of the budget window.
+	Reserve(ctx context.Context, amount float64, limits []BudgetLimit) (id string, ok bool, err error)
+
+	// Release drops the hold id from keys. Actual spend is recorded
+	// separately with AddSpend.
+	Release(ctx context.Context, id string, keys []string)
+}
+
 // BudgetExceededError is returned when a call is blocked by budget enforcement.
 type BudgetExceededError struct {
 	UserID       string
@@ -109,10 +205,18 @@ func (e *BudgetExceededError) Error() string {
 		e.UserID, e.ProjectID, e.CurrentSpend, e.Limit, e.ResetAt.Format(time.RFC3339))
 }
 
-// spendEntry holds a key's spend as time-ordered buckets.
+// spendEntry holds a key's spend as time-ordered buckets, plus the holds of
+// calls still in flight.
 type spendEntry struct {
 	mu      sync.Mutex
 	buckets []spendBucket
+	holds   map[string]spendHold
+}
+
+// spendHold is spend reserved by a call in flight.
+type spendHold struct {
+	amount float64
+	at     time.Time
 }
 
 // spendBucket is one or more spend events merged together. It counts
@@ -129,6 +233,7 @@ type spendBucket struct {
 type InMemoryBudgetStore struct {
 	data   sync.Map // map[string]*spendEntry
 	window BudgetWindow
+	holdID atomic.Uint64
 }
 
 // NewInMemoryBudgetStore creates a new in-memory store with a rolling window of the given length.
@@ -147,7 +252,7 @@ func (s *InMemoryBudgetStore) getOrCreate(key string) *spendEntry {
 	return val.(*spendEntry)
 }
 
-// prune drops buckets that no longer count at now. Callers must hold entry.mu.
+// prune drops buckets and holds that no longer count at now. Callers must hold entry.mu.
 func (s *InMemoryBudgetStore) prune(entry *spendEntry, now time.Time) {
 	start := s.window.Start(now)
 	i := 0
@@ -155,6 +260,25 @@ func (s *InMemoryBudgetStore) prune(entry *spendEntry, now time.Time) {
 		i++
 	}
 	entry.buckets = entry.buckets[i:]
+
+	for id, h := range entry.holds {
+		if h.at.Before(start) {
+			delete(entry.holds, id)
+		}
+	}
+}
+
+// total returns the spend that counts at now, holds included. Callers must hold entry.mu.
+func (s *InMemoryBudgetStore) total(entry *spendEntry, now time.Time) float64 {
+	s.prune(entry, now)
+	var total float64
+	for _, b := range entry.buckets {
+		total += b.amount
+	}
+	for _, h := range entry.holds {
+		total += h.amount
+	}
+	return total
 }
 
 func (s *InMemoryBudgetStore) GetSpend(ctx context.Context, key string) float64 {
@@ -162,12 +286,52 @@ func (s *InMemoryBudgetStore) GetSpend(ctx context.Context, key string) float64 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
-	s.prune(entry, time.Now())
-	var total float64
-	for _, b := range entry.buckets {
-		total += b.amount
+	return s.total(entry, time.Now())
+}
+
+// Reserve holds amount against every key in limits if each key's spend plus
+// amount stays within its limit.
+func (s *InMemoryBudgetStore) Reserve(ctx context.Context, amount float64, limits []BudgetLimit) (string, bool, error) {
+	keys := make([]string, len(limits))
+	for i, l := range limits {
+		keys[i] = l.Key
 	}
-	return total
+	// Lock in sorted order so calls locking overlapping keys can't deadlock.
+	slices.Sort(keys)
+	keys = slices.Compact(keys)
+	entries := make(map[string]*spendEntry, len(keys))
+	for _, k := range keys {
+		entry := s.getOrCreate(k)
+		entry.mu.Lock()
+		defer entry.mu.Unlock()
+		entries[k] = entry
+	}
+
+	now := time.Now()
+	for _, l := range limits {
+		if s.total(entries[l.Key], now)+amount > l.Limit {
+			return "", false, nil
+		}
+	}
+
+	id := strconv.FormatUint(s.holdID.Add(1), 10)
+	for _, entry := range entries {
+		if entry.holds == nil {
+			entry.holds = make(map[string]spendHold)
+		}
+		entry.holds[id] = spendHold{amount: amount, at: now}
+	}
+	return id, true, nil
+}
+
+// Release drops the hold id from keys.
+func (s *InMemoryBudgetStore) Release(ctx context.Context, id string, keys []string) {
+	for _, k := range keys {
+		entry := s.getOrCreate(k)
+		entry.mu.Lock()
+		delete(entry.holds, id)
+		entry.mu.Unlock()
+	}
 }
 
 func (s *InMemoryBudgetStore) AddSpend(ctx context.Context, key string, amount float64) {
@@ -244,25 +408,98 @@ func (e *BudgetEnforcer) userBudget(userID string) (key string, limit float64) {
 	return "", 0
 }
 
+// limits returns the limits that apply to a call: the user's (or the shared
+// unattributed one) and the project's.
+func (e *BudgetEnforcer) limits(userID, projectID string) []BudgetLimit {
+	var limits []BudgetLimit
+	if key, limit := e.userBudget(userID); key != "" {
+		limits = append(limits, BudgetLimit{Key: key, Limit: limit})
+	}
+	if l := e.config.projectLimit(); l > 0 && projectID != "" {
+		limits = append(limits, BudgetLimit{Key: "project:" + projectID, Limit: l})
+	}
+	return limits
+}
+
 // Check determines whether a call is allowed given current budget usage.
 // Returns (allowed, fallbackAction).
+//
+// Check holds nothing, so calls checked at the same time can all be allowed
+// and together overshoot a limit. Use Reserve to prevent that.
 func (e *BudgetEnforcer) Check(ctx context.Context, userID, projectID string, estimatedCost float64) (bool, FallbackAction) {
-	// Check per-user limit, or the shared limit for calls with no user.
-	if key, limit := e.userBudget(userID); key != "" {
-		if e.store.GetSpend(ctx, key)+estimatedCost > limit {
+	for _, l := range e.limits(userID, projectID) {
+		if e.store.GetSpend(ctx, l.Key)+estimatedCost > l.Limit {
 			return false, e.config.FallbackAction
 		}
 	}
-
-	// Check per-project limit.
-	if e.config.projectLimit() > 0 && projectID != "" {
-		projSpend := e.store.GetSpend(ctx, "project:"+projectID)
-		if projSpend+estimatedCost > e.config.projectLimit() {
-			return false, e.config.FallbackAction
-		}
-	}
-
 	return true, e.config.FallbackAction
+}
+
+// Reservation is spend held against a call's budgets while the call runs,
+// so calls made at the same time can't all pass the budget check at once.
+type Reservation struct {
+	store  BudgetReserver
+	id     string
+	keys   []string
+	amount float64
+	once   sync.Once
+}
+
+// Release drops the hold. It is safe to call more than once, and on a nil
+// Reservation.
+func (r *Reservation) Release(ctx context.Context) {
+	if r == nil {
+		return
+	}
+	r.once.Do(func() {
+		// Release even if ctx was cancelled, or the hold would count against
+		// the budget until it falls out of the window.
+		r.store.Release(context.WithoutCancel(ctx), r.id, r.keys)
+	})
+}
+
+// held returns the amount held, or 0 for a nil Reservation.
+func (r *Reservation) held() float64 {
+	if r == nil {
+		return 0
+	}
+	return r.amount
+}
+
+// Reserve checks whether estimatedCost fits within every budget that applies
+// to the call and, if it does, holds it until the returned Reservation is
+// released. Record the call's actual cost with Record, then release the hold.
+//
+// It returns a nil Reservation when nothing was held: no limit applies, the
+// call isn't allowed, or the store doesn't implement BudgetReserver, in which
+// case it falls back to Check.
+func (e *BudgetEnforcer) Reserve(ctx context.Context, userID, projectID string, estimatedCost float64) (*Reservation, bool) {
+	limits := e.limits(userID, projectID)
+	if len(limits) == 0 {
+		return nil, true
+	}
+	reserver, ok := e.store.(BudgetReserver)
+	if !ok {
+		allowed, _ := e.Check(ctx, userID, projectID, estimatedCost)
+		return nil, allowed
+	}
+
+	id, ok, err := reserver.Reserve(ctx, estimatedCost, limits)
+	if err != nil {
+		// Fail open, as GetSpend does when the store is unreachable: a budget
+		// store outage shouldn't stop every LLM call.
+		otel.Handle(fmt.Errorf("otellix: budget reservation failed, allowing the call: %w", err))
+		return nil, true
+	}
+	if !ok {
+		return nil, false
+	}
+
+	keys := make([]string, len(limits))
+	for i, l := range limits {
+		keys[i] = l.Key
+	}
+	return &Reservation{store: reserver, id: id, keys: keys, amount: estimatedCost}, true
 }
 
 // Record adds actual cost to the budget store after a successful call.

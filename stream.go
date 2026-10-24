@@ -8,20 +8,19 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
-	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // Stream wraps a provider stream to add OpenTelemetry tracing, budget constraints,
 // and cost aggregations over the streamed responses.
 type Stream struct {
-	base     providers.Stream
-	ctx      context.Context
-	span     trace.Span
-	cfg      *Config
-	enforcer *BudgetEnforcer
-	provider string
-	model    string
+	base        providers.Stream
+	ctx         context.Context
+	span        trace.Span
+	cfg         *Config
+	enforcer    *BudgetEnforcer
+	reservation *Reservation
+	pricing     PricingEntry
 
 	// Aggregated metrics
 	inputTokens  int64
@@ -49,22 +48,26 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 	cfg.fillAttributionFromContext(ctx)
 
 	var enforcer *BudgetEnforcer
+	var reservation *Reservation
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)
-		// Basic check before starting stream
-		allowed, action := enforcer.Check(ctx, cfg.UserID, cfg.ProjectID, 0) // No estimate yet
+		if err := cfg.unpricedError(); err != nil {
+			return nil, err
+		}
+
+		// Hold the estimated cost until the stream is closed. Recv still
+		// cuts the stream off if it runs past the budget.
+		var allowed bool
+		reservation, allowed = enforcer.Reserve(ctx, cfg.UserID, cfg.ProjectID, cfg.estimateCost(params))
 		if !allowed {
-			switch action {
+			switch cfg.BudgetConfig.FallbackAction {
 			case FallbackBlock:
 				return nil, enforcer.BudgetError(cfg.UserID, cfg.ProjectID)
 			case FallbackDowngrade:
-				fallbackModel := cfg.BudgetConfig.FallbackModel
-				if fallbackModel == "" {
-					fallbackModel = cfg.FallbackModel
-				}
-				if fallbackModel != "" {
-					cfg.Model = fallbackModel
-					params.Model = fallbackModel
+				if cfg.downgrade(&params) {
+					if err := cfg.unpricedError(); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -96,24 +99,28 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 		span.SetAttributes(attribute.String("llm.prompt_fingerprint", fingerprint))
 	}
 
+	cfg.flagUnpriced(ctx, span)
+	pricing, _ := cfg.pricing()
+
 	start := time.Now()
 	baseStream, err := provider.Stream(ctx, params)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(attribute.Bool("llm.error", true))
 		span.End()
+		reservation.Release(ctx)
 		return nil, err
 	}
 
 	return &Stream{
-		base:     baseStream,
-		ctx:      ctx,
-		span:     span,
-		cfg:      cfg,
-		enforcer: enforcer,
-		provider: cfg.Provider,
-		model:    cfg.Model,
-		start:    start,
+		base:        baseStream,
+		ctx:         ctx,
+		span:        span,
+		cfg:         cfg,
+		enforcer:    enforcer,
+		reservation: reservation,
+		pricing:     pricing,
+		start:       start,
 	}, nil
 }
 
@@ -137,15 +144,15 @@ func (s *Stream) Recv() (providers.StreamEvent, error) {
 	}
 
 	// Update cost progressively
-	costUSD := CalculateCost(s.provider, s.model, providers.CallResult{
+	s.costUSD = s.pricing.cost(providers.CallResult{
 		InputTokens:  s.inputTokens,
 		OutputTokens: s.outputTokens,
 	})
 
-	s.costUSD = costUSD
-
 	if s.enforcer != nil {
-		allowed, action := s.enforcer.Check(s.ctx, s.cfg.UserID, s.cfg.ProjectID, costUSD)
+		// Spend already includes this stream's own hold, so check only the
+		// cost beyond it.
+		allowed, action := s.enforcer.Check(s.ctx, s.cfg.UserID, s.cfg.ProjectID, s.costUSD-s.reservation.held())
 		if !allowed && action == FallbackBlock {
 			s.span.AddEvent("budget.aborted")
 			_ = s.Close() // the budget error is what the caller needs
@@ -175,13 +182,7 @@ func (s *Stream) Close() error {
 		attribute.Float64("llm.cost_usd", s.costUSD),
 	)
 
-	metricAttrs := metric.WithAttributes(
-		attribute.String("provider", s.provider),
-		attribute.String("model", s.model),
-		attribute.String("feature_id", s.cfg.FeatureID),
-		attribute.String("user_id", s.cfg.UserID),
-		attribute.String("project_id", s.cfg.ProjectID),
-	)
+	metricAttrs := metricAttributes(s.cfg)
 
 	inputTokensCount.Add(s.ctx, s.inputTokens, metricAttrs)
 	outputTokensCount.Add(s.ctx, s.outputTokens, metricAttrs)
@@ -190,6 +191,7 @@ func (s *Stream) Close() error {
 
 	if s.enforcer != nil {
 		s.enforcer.Record(s.ctx, s.cfg.UserID, s.cfg.ProjectID, s.costUSD)
+		s.reservation.Release(s.ctx)
 	}
 
 	if devPrinter != nil {
