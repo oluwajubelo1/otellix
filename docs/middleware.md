@@ -265,7 +265,7 @@ func main() {
 }
 ```
 
-> **Pass `c.Context()`, not `c`.** In Fiber v3, `fiber.Ctx` itself satisfies `context.Context`, so `otellix.Trace(c, ...)` compiles. But it reads values from Fiber's own request store, not from the context the middleware set. The call would silently be unattributed and skip per-user budgets. Always pass `c.Context()`.
+> **Pass `c.Context()`, not `c`.** In Fiber v3, `fiber.Ctx` itself satisfies `context.Context`, so `otellix.Trace(c, ...)` compiles. But it reads values from Fiber's own request store, not from the context the middleware set. The call would be unattributed, and refused by a budget with per-user limits. Always pass `c.Context()`.
 
 ### Use verified identity
 
@@ -362,7 +362,7 @@ The LLM spans created inside the request are children of this span, so in your t
 
 ## Calls with no user
 
-Requests with no user ID aren't covered by `PerUserLimit`. To find them, filter spans on `llm.user_attributed = false`. To cap them, set `BudgetConfig.UnattributedLimit`. Both are covered in detail in [Cost Attribution](attribution.md#calls-with-no-user).
+Requests with no user ID can't be held to `PerUserLimit`, so a budget that sets it refuses them with `otellix.UnattributedCallError`, unless `BudgetConfig.UnattributedLimit` caps them. That includes requests without a token, and with `WithVerifiedJWT`, requests whose token failed verification. To find them, filter spans on `llm.user_attributed = false`. Both are covered in detail in [Cost Attribution](attribution.md#calls-with-no-user).
 
 ---
 

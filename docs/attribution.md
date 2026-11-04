@@ -120,7 +120,7 @@ sum by (feature_id) (increase(otellix_llm_cost_usd_total[1d]))
 
 ### In budgets
 
-`PerUserLimit` is checked against `user_id`, and `PerProjectLimit` against `project_id`. A call with no user ID skips `PerUserLimit` entirely, which is why the next section matters.
+`PerUserLimit` is checked against `user_id`, and `PerProjectLimit` against `project_id`. A call with no user ID can't be held to a per-user limit, so a budget that sets `PerUserLimit` refuses it, unless `UnattributedLimit` caps calls with no user. That's why the next section matters.
 
 ---
 
@@ -129,7 +129,7 @@ sum by (feature_id) (increase(otellix_llm_cost_usd_total[1d]))
 Of all the identifiers, the user is the one teams most often leave off, and it's the one that tells you who to ask about a cost spike. An unattributed call has two problems:
 
 1. **You can't trace it back to a person.** It shows up in totals with no one to follow up with.
-2. **It's not covered by `PerUserLimit`.** Per-user limits only apply when there's a user to apply them to.
+2. **It can't be held to `PerUserLimit`.** Per-user limits only apply when there's a user to apply them to. So if your budget sets `PerUserLimit` but not `UnattributedLimit`, a call with no user returns `otellix.UnattributedCallError` and isn't made. Otherwise, a request that simply leaves out its token would escape every per-user limit.
 
 Common causes:
 
@@ -225,7 +225,9 @@ How it behaves:
 - It uses the same window and store as your other limits (see [Budget Windows](budget-windows.md)).
 - `PerProjectLimit` still applies on top, if the call has a project.
 - When the shared limit is hit, `FallbackAction` applies as usual: block, downgrade or notify. `BudgetExceededError.UserID` is `""`, and `CurrentSpend` / `Limit` describe the shared budget.
-- When `UnattributedLimit` is `0` (the default), unattributed calls skip user-level limits, as they always have.
+- When `UnattributedLimit` is `0` (the default) and `PerUserLimit` is set, calls with no user are refused with `otellix.UnattributedCallError`. To let them run, give them a user ID, or set `UnattributedLimit` to the most they may spend together.
+
+> **Changed in v1.8.0:** calls with no user used to skip user-level limits when `UnattributedLimit` was `0`, so a request that left out its token, or sent one that failed verification, wasn't limited at all.
 
 Because the limit is shared, one noisy anonymous caller can use it up for every other anonymous caller. That's usually what you want, since it caps your exposure. If it isn't, attribute those calls properly.
 

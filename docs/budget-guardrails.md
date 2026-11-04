@@ -51,7 +51,7 @@ The central policy object. It sets the limits, what happens when one is hit, and
 | --- | --- | --- | --- |
 | `PerUserLimit` | `float64` (USD) | `0` = no limit | Maximum spend per user ID, per window. |
 | `PerProjectLimit` | `float64` (USD) | `0` = no limit | Maximum spend per project ID, per window. |
-| `UnattributedLimit` | `float64` (USD) | `0` = no limit | One shared maximum for **all** calls with no user ID, per window. See [Calls with no user](#calls-with-no-user). |
+| `UnattributedLimit` | `float64` (USD) | `0` = none | One shared maximum for **all** calls with no user ID, per window. If `PerUserLimit` is set and this isn't, calls with no user are refused. See [Calls with no user](#calls-with-no-user). |
 | `FallbackAction` | `FallbackAction` | `FallbackBlock` | What happens when a limit is hit. See [Fallback actions](#fallback-actions). |
 | `FallbackModel` | `string` | `""` | The cheaper model used by `FallbackDowngrade`. |
 | `Store` | `BudgetStore` | in-memory | Where spend is kept. See [Budget stores](#2-budget-stores-otellixbudgetstore). |
@@ -122,7 +122,7 @@ The window decides which spend counts and when it resets: a rolling period such 
 For `otellix.Trace`:
 
 1. Otellix works out the call's user and project from the options or context. See [Cost Attribution](attribution.md#precedence).
-2. If a limit would depend on a user or project ID that wasn't verified, such as one from an unverified JWT or a header, it returns an `UnverifiedIdentityError`. See [Verified Identity & Budgets](verified-identity.md).
+2. If a limit would depend on a user or project ID that wasn't verified, such as one from an unverified JWT or a header, it returns an `UnverifiedIdentityError`. See [Verified Identity & Budgets](verified-identity.md). If `PerUserLimit` is set and the call has no user, it returns an `UnattributedCallError`, unless `UnattributedLimit` is set. See [Calls with no user](#calls-with-no-user).
 3. If the model has no price and `UnpricedModel` is `UnpricedBlock`, it returns an `UnpricedModelError`. See [Unpriced Models](unpriced-models.md).
 4. It estimates the call's cost from the length of the prompt and the expected output (500 tokens by default, capped at `MaxTokens`). See [Cost estimates](budget-reservations.md#how-the-estimate-is-worked-out).
 5. It checks each limit that applies:
@@ -162,7 +162,7 @@ If `FallbackModel` is empty, Otellix uses the call's `otellix.WithFallbackModel(
 
 ## Calls with no user
 
-A call with no user ID isn't covered by `PerUserLimit`. That includes background jobs, anonymous routes, and requests where the middleware found no identity. Set `UnattributedLimit` to give all of them one **shared** limit:
+A call with no user ID can't be held to `PerUserLimit`. That includes background jobs, anonymous routes, and requests where the middleware found no identity, such as one without a token. Set `UnattributedLimit` to give all of them one **shared** limit:
 
 ```go
 budget := &otellix.BudgetConfig{
@@ -172,7 +172,11 @@ budget := &otellix.BudgetConfig{
 }
 ```
 
-Leaving it at `0` keeps the old behaviour: unattributed calls skip user-level limits. [Cost Attribution](attribution.md#calls-with-no-user) explains how to find these calls and fix them at the source.
+If `PerUserLimit` is set and `UnattributedLimit` is left at `0`, calls with no user are **refused** with `otellix.UnattributedCallError`, and the provider isn't called. Without that, a request that left out its token would escape every per-user limit. To let such calls run, either give them a user ID, e.g. `otellix.WithUserID("system:nightly-report")` for a background job, or set `UnattributedLimit`.
+
+> **Changed in v1.8.0:** calls with no user used to skip user-level limits when `UnattributedLimit` was `0`.
+
+[Cost Attribution](attribution.md#calls-with-no-user) explains how to find these calls and fix them at the source.
 
 ---
 

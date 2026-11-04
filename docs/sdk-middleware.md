@@ -194,7 +194,7 @@ A call whose cost was estimated, rather than reported by the provider, has `llm.
 | Call succeeds | The response, unchanged | A successful span with tokens and cost |
 | Provider returns an error status (400, 429, 500, ...) | The SDK's own `*openai.Error` / `*anthropic.Error` | An error span; nothing charged |
 | Network error | The network error | An error span; the SDK retries as usual |
-| Budget, unpriced model or anomaly block | Otellix's error | No span; not sent, not retried |
+| Budget, identity, unpriced model or anomaly block | Otellix's error, e.g. `*otellix.BudgetExceededError` or `*otellix.UnattributedCallError` | No span; not sent, not retried |
 
 The SDK retries some failures, such as 429 and 500 responses. The middleware runs once per attempt, so each attempt gets its own span, and only the attempt that succeeds is charged.
 
