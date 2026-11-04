@@ -3,23 +3,16 @@
 // echo.go extracts user_id and project_id from requests and injects them into the
 // context so downstream otellix.Trace() calls pick them up automatically.
 //
-// Usage:
-//
-//	e := echo.New()
-//	e.Use(otellixmw.EchoMiddleware())
-//
-// With custom config:
-//
-//	e.Use(otellixmw.EchoMiddleware(
-//	    otellixmw.WithJWTClaim("user_id"),
-//	    otellixmw.WithProjectHeader("X-Tenant-ID"),
-//	))
-//
-// Reading identity your auth middleware has already verified (recommended
-// whenever budgets are enforced):
+// Budgets only apply limits to verified identity, so read the user from
+// your auth middleware, or have the middleware verify the JWT:
 //
 //	e.Use(authMiddleware) // sets c.Set("user_id", ...) after verifying the token
 //	e.Use(otellixmw.EchoMiddleware(otellixmw.WithUserFromContext("user_id")))
+//
+//	e.Use(otellixmw.EchoMiddleware(otellixmw.WithVerifiedJWT(keyFunc)))
+//
+// With no options, the user comes from the JWT's "sub" claim unverified, and
+// no project is read. See GinMiddleware for the details.
 package middleware
 
 import (
@@ -48,7 +41,7 @@ func EchoMiddleware(opts ...MiddlewareOption) echo.MiddlewareFunc {
 			defer span.End()
 
 			userID, projectID := cfg.Resolve(c.Get, c.Request().Header.Get)
-			ctx = identity.Apply(ctx, span, userID, projectID)
+			ctx = cfg.Attribute(ctx, span, userID, projectID)
 
 			// Set request attributes.
 			span.SetAttributes(

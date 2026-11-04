@@ -386,3 +386,22 @@ func TestOpenAIMiddlewareDowngrade(t *testing.T) {
 	assertSpend(t, store, "user:downgraded", otellix.CalculateCost("openai", "gpt-4o-mini",
 		providers.CallResult{InputTokens: 10, OutputTokens: 5}))
 }
+
+// TestOpenAIMiddlewareUnverifiedIdentity checks that a budgeted SDK call by
+// an unverified user is refused like a budget block: not sent, not retried.
+func TestOpenAIMiddlewareUnverifiedIdentity(t *testing.T) {
+	srv, hits := fakeAPI(t, http.StatusOK, "application/json", `{}`)
+	budget, _ := newBudget()
+	client := openAIClient(srv, otellix.WithBudgetConfig(budget))
+
+	ctx := otellix.ContextWithUnverifiedUser(context.Background(), "forged_user")
+	_, err := client.Chat.Completions.New(ctx, chatParams)
+
+	var unverified *otellix.UnverifiedIdentityError
+	if !errors.As(err, &unverified) {
+		t.Fatalf("expected an UnverifiedIdentityError from the SDK, got %v", err)
+	}
+	if hits.Load() != 0 {
+		t.Errorf("a refused call should not be sent, got %d requests", hits.Load())
+	}
+}

@@ -65,6 +65,9 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 	var covered float64
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)
+		if err := cfg.unverifiedIdentityError(); err != nil {
+			return nil, err
+		}
 		if err := cfg.unpricedError(); err != nil {
 			return nil, err
 		}
@@ -106,6 +109,7 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 		attribute.String("llm.project_id", cfg.ProjectID),
 		attribute.Bool("llm.user_attributed", cfg.UserID != ""),
 	)
+	cfg.setIdentityAttributes(span)
 
 	for k, v := range cfg.Attributes {
 		span.SetAttributes(attribute.String(k, v))

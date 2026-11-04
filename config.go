@@ -1,51 +1,100 @@
 // Package otellix provides OpenTelemetry-native LLM observability for Go.
 package otellix
 
-import "context"
+import (
+	"context"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+)
 
 // contextKey is a private type to avoid collisions in context.Context.
 type contextKey string
 
 const (
-	userIDKey    contextKey = "otellix.user_id"
-	projectIDKey contextKey = "otellix.project_id"
+	userIDKey              contextKey = "otellix.user_id"
+	projectIDKey           contextKey = "otellix.project_id"
+	unverifiedUserIDKey    contextKey = "otellix.unverified_user_id"
+	unverifiedProjectIDKey contextKey = "otellix.unverified_project_id"
 )
 
-// ContextWithUser returns a new context with the given UserID.
+// ContextWithUser returns a new context with the given UserID. Your code is
+// vouching for the ID, so budgets apply limits to it: set it only from
+// identity you have verified, such as your auth middleware's session.
 func ContextWithUser(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, userIDKey, userID)
 }
 
-// ContextWithProject returns a new context with the given ProjectID.
+// ContextWithProject returns a new context with the given ProjectID. As with
+// ContextWithUser, budgets apply limits to it, so set it only from identity
+// you have verified, such as the tenant of the signed-in user.
 func ContextWithProject(ctx context.Context, projectID string) context.Context {
 	return context.WithValue(ctx, projectIDKey, projectID)
 }
 
+// ContextWithUnverifiedUser returns a new context with a UserID that comes
+// from somewhere a caller controls, such as an unverified JWT. Calls are
+// attributed to it in traces and metrics, but budgets won't apply a limit
+// to it: if a limit would depend on it, the call returns an
+// UnverifiedIdentityError instead. A UserID set with ContextWithUser takes
+// precedence.
+func ContextWithUnverifiedUser(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, unverifiedUserIDKey, userID)
+}
+
+// ContextWithUnverifiedProject is ContextWithUnverifiedUser for a ProjectID,
+// such as one read from a request header.
+func ContextWithUnverifiedProject(ctx context.Context, projectID string) context.Context {
+	return context.WithValue(ctx, unverifiedProjectIDKey, projectID)
+}
+
 // fillAttributionFromContext sets UserID and ProjectID from ctx when no
-// option set them, so middleware attribution reaches every call.
+// option set them, so middleware attribution reaches every call, and notes
+// which of them weren't verified.
 func (c *Config) fillAttributionFromContext(ctx context.Context) {
 	if c.UserID == "" {
-		c.UserID = UserFromContext(ctx)
+		c.UserID, c.userUnverified = idFromContext(ctx, userIDKey, unverifiedUserIDKey)
 	}
 	if c.ProjectID == "" {
-		c.ProjectID = ProjectFromContext(ctx)
+		c.ProjectID, c.projectUnverified = idFromContext(ctx, projectIDKey, unverifiedProjectIDKey)
 	}
 }
 
-// UserFromContext retrieves the UserID from the context, if present.
+// idFromContext returns the ID in ctx, preferring one your code set over an
+// unverified one, and whether it is unverified.
+func idFromContext(ctx context.Context, key, unverifiedKey contextKey) (id string, unverified bool) {
+	if v, ok := ctx.Value(key).(string); ok && v != "" {
+		return v, false
+	}
+	if v, ok := ctx.Value(unverifiedKey).(string); ok && v != "" {
+		return v, true
+	}
+	return "", false
+}
+
+// setIdentityAttributes records on span whether the call's user and project
+// IDs were verified.
+func (c *Config) setIdentityAttributes(span trace.Span) {
+	if c.UserID != "" {
+		span.SetAttributes(attribute.Bool("llm.user_verified", !c.userUnverified))
+	}
+	if c.ProjectID != "" {
+		span.SetAttributes(attribute.Bool("llm.project_verified", !c.projectUnverified))
+	}
+}
+
+// UserFromContext retrieves the UserID from the context, if present,
+// whether or not it was verified.
 func UserFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(userIDKey).(string); ok {
-		return v
-	}
-	return ""
+	id, _ := idFromContext(ctx, userIDKey, unverifiedUserIDKey)
+	return id
 }
 
-// ProjectFromContext retrieves the ProjectID from the context, if present.
+// ProjectFromContext retrieves the ProjectID from the context, if present,
+// whether or not it was verified.
 func ProjectFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(projectIDKey).(string); ok {
-		return v
-	}
-	return ""
+	id, _ := idFromContext(ctx, projectIDKey, unverifiedProjectIDKey)
+	return id
 }
 
 // Config holds the configuration for a single traced LLM call.
@@ -91,6 +140,11 @@ type Config struct {
 
 	// AnomalyConfig holds cost anomaly detection configuration. Nil means no anomaly detection.
 	AnomalyConfig *AnomalyConfig
+
+	// userUnverified and projectUnverified are set when UserID or ProjectID
+	// came from ContextWithUnverifiedUser or ContextWithUnverifiedProject.
+	userUnverified    bool
+	projectUnverified bool
 }
 
 // Option is a functional option for configuring a traced LLM call.

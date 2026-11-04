@@ -121,6 +121,45 @@ func (e *UnpricedModelError) Error() string {
 		e.Provider, e.Model)
 }
 
+// UnverifiedIdentityError is returned when a budget limit would apply to a
+// user or project ID that wasn't verified: one the HTTP middleware read from
+// an unverified JWT or a header, which callers can set to anything. A limit
+// on such an ID could be dodged by sending a new one with each request, or
+// pointed at someone else's budget. The provider isn't called.
+type UnverifiedIdentityError struct {
+	// Kind is "user" or "project".
+	Kind string
+	// ID is the unverified ID.
+	ID string
+}
+
+func (e *UnverifiedIdentityError) Error() string {
+	fix := "WithVerifiedJWT or WithUserFromContext, or set it with otellix.ContextWithUser"
+	if e.Kind == "project" {
+		fix = "WithProjectFromContext, or set it with otellix.ContextWithProject"
+	}
+	return fmt.Sprintf("otellix: a budget limit applies to %s ID %q, which wasn't verified: it came from an unverified JWT or a header, which callers can set to anything. Verify it in the middleware with %s after your own auth check (the Fiber middleware needs v0.2.0 or later for this). See docs/verified-identity.md",
+		e.Kind, e.ID, fix)
+}
+
+// unverifiedIdentityError returns an UnverifiedIdentityError if a budget
+// limit would depend on an unverified user or project ID. A user ID matters
+// to per-user limits, and to UnattributedLimit, which a call escapes by
+// having any user ID.
+func (c *Config) unverifiedIdentityError() error {
+	bc := c.BudgetConfig
+	if bc == nil {
+		return nil
+	}
+	if c.userUnverified && c.UserID != "" && (bc.userLimit() > 0 || bc.UnattributedLimit > 0) {
+		return &UnverifiedIdentityError{Kind: "user", ID: c.UserID}
+	}
+	if c.projectUnverified && c.ProjectID != "" && bc.projectLimit() > 0 {
+		return &UnverifiedIdentityError{Kind: "project", ID: c.ProjectID}
+	}
+	return nil
+}
+
 // defaultEstimatedOutputTokens is the output assumed by the pre-call budget
 // check when BudgetConfig.EstimatedOutputTokens is unset.
 const defaultEstimatedOutputTokens = 500
