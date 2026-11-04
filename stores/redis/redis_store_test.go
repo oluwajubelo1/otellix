@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/oluwajubelo1/otellix"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
 )
 
 // NOTE: This test requires a local Redis instance running on port 6379.
@@ -214,5 +216,126 @@ func TestRedisBudgetStoreReserve(t *testing.T) {
 		if spend := store.GetSpend(ctx, k); spend != 0 {
 			t.Errorf("%s: expected no spend after releasing every hold, got $%.4f", k, spend)
 		}
+	}
+}
+
+// testClient returns a client for the local Redis, skipping the test if
+// there isn't one, and deletes keys under prefix when the test ends.
+func testClient(t *testing.T, prefix string) *redis.Client {
+	t.Helper()
+	client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Skip("Redis not available on localhost:6379, skipping integration test")
+	}
+	clean := func() {
+		keys, _ := client.Keys(context.Background(), prefix+":*").Result()
+		if len(keys) > 0 {
+			client.Del(context.Background(), keys...)
+		}
+	}
+	clean()
+	t.Cleanup(clean)
+	return client
+}
+
+// captureErrors collects the errors reported through the OpenTelemetry
+// error handler during the test.
+func captureErrors(t *testing.T) func() []string {
+	t.Helper()
+	var mu sync.Mutex
+	var errs []string
+	previous := otel.GetErrorHandler()
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		errs = append(errs, err.Error())
+	}))
+	t.Cleanup(func() { otel.SetErrorHandler(previous) })
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), errs...)
+	}
+}
+
+// TestRedisBudgetStoreMismatchedZonesKeepSpend checks that instances whose
+// calendar days start at different times, sharing a prefix, don't delete
+// spend the other still counts.
+func TestRedisBudgetStoreMismatchedZonesKeepSpend(t *testing.T) {
+	ctx := context.Background()
+	const prefix = "test:otellix:zones"
+	client := testClient(t, prefix)
+	captureErrors(t) // the mismatch warning is expected here
+
+	utcMinus12, err := time.LoadLocation("Etc/GMT+12")
+	if err != nil {
+		t.Skip("no time zone database")
+	}
+	utcDay, westDay := otellix.CalendarDay(time.UTC), otellix.CalendarDay(utcMinus12)
+	utcStore := NewRedisBudgetStoreWithWindow(client, prefix, utcDay)
+	westStore := NewRedisBudgetStoreWithWindow(client, prefix, westDay)
+
+	// The two days start 12 hours apart. Put $1.00 between their starts,
+	// so it counts for whichever day started first.
+	now := time.Now()
+	early, late := utcStore, westStore
+	if westDay.Start(now).Before(utcDay.Start(now)) {
+		early, late = westStore, utcStore
+	}
+	between := (utcDay.Start(now).Unix() + westDay.Start(now).Unix()) / 2
+	key := "user:traveller"
+	client.ZAdd(ctx, prefix+":"+key, redis.Z{Score: float64(between), Member: "e1:1.00"})
+
+	if spend := early.GetSpend(ctx, key); spend != 1.00 {
+		t.Fatalf("the earlier day should count the $1.00, got $%.2f", spend)
+	}
+	if spend := late.GetSpend(ctx, key); spend != 0 {
+		t.Errorf("the later day shouldn't count spend from before it started, got $%.2f", spend)
+	}
+	if spend := early.GetSpend(ctx, key); spend != 1.00 {
+		t.Errorf("reading through the other instance deleted spend this one counts: got $%.2f, want $1.00", spend)
+	}
+}
+
+func TestRedisBudgetStoreWarnsOnWindowMismatch(t *testing.T) {
+	ctx := context.Background()
+	const prefix = "test:otellix:windows"
+	client := testClient(t, prefix)
+	errs := captureErrors(t)
+
+	lagos, err := time.LoadLocation("Africa/Lagos")
+	if err != nil {
+		t.Skip("no time zone database")
+	}
+	NewRedisBudgetStoreWithWindow(client, prefix, otellix.CalendarDay(time.UTC)).GetSpend(ctx, "user:a")
+	NewRedisBudgetStoreWithWindow(client, prefix, otellix.CalendarDay(time.UTC)).GetSpend(ctx, "user:b")
+	if got := errs(); len(got) != 0 {
+		t.Fatalf("instances with the same window shouldn't warn, got %q", got)
+	}
+
+	// Project budgets are a different namespace, so their window can differ.
+	NewRedisBudgetStoreWithWindow(client, prefix, otellix.CalendarMonth(time.UTC)).GetSpend(ctx, "project:acme")
+	if got := errs(); len(got) != 0 {
+		t.Fatalf("a different window for project budgets shouldn't warn, got %q", got)
+	}
+
+	NewRedisBudgetStoreWithWindow(client, prefix, otellix.CalendarDay(lagos)).GetSpend(ctx, "user:c")
+	got := errs()
+	if len(got) != 1 || !strings.Contains(got[0], "calendar day in Africa/Lagos") || !strings.Contains(got[0], "calendar day in UTC") {
+		t.Fatalf("expected one warning naming both windows, got %q", got)
+	}
+}
+
+func TestRedisBudgetStoreWarnsOnLocalTime(t *testing.T) {
+	const prefix = "test:otellix:local"
+	client := testClient(t, prefix)
+	errs := captureErrors(t)
+
+	NewRedisBudgetStoreWithWindow(client, prefix, otellix.CalendarDay(time.Local))
+
+	if got := errs(); len(got) != 1 || !strings.Contains(got[0], "named location") {
+		t.Fatalf("expected a warning about time.Local, got %q", got)
 	}
 }
