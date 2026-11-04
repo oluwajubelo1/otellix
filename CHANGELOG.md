@@ -20,6 +20,13 @@ This release closes several ways around a budget. Four fixes change default beha
 - **Streams read to the end without `Close()` weren't charged.** A stream is now finished, and its cost recorded, at `io.EOF` or on an error. A stream that fails part way is charged for what it streamed, and its span marked as an error.
 - **SDK responses without usage cost $0.** Some OpenAI-compatible servers and proxies leave `usage` out, and the SDK middleware recorded zero tokens. It now charges an estimate and sets `llm.usage_estimated` on the span.
 - The dedup cache key left out `Temperature` and `Extra`, so a request with tools or a response format could be served the result of one without. Both are now in the key, and the key's fields can no longer run into each other.
+- **Redis instances with different windows deleted each other's spend.** The Redis store deleted spend from before its own window's start, so an instance whose calendar day started later, such as one in a time zone further east, deleted spend that other instances still counted: $1.00 dropped to $0.00 in a test. It now only deletes spend no window could still count, and reports instances whose windows differ through the OpenTelemetry error handler. A Redis store whose calendar window uses `time.Local` also reports a warning. See [Every instance needs the same window](docs/budget-windows.md#every-instance-needs-the-same-window).
+- **Streamed calls were missing from `GetBreakdown` and `GetForecast`,** although budgets counted them.
+
+### Changed
+
+- `GetForecast` uses the calendar month in UTC, not the server's local time zone, so every server agrees on when the month starts. Use the new `GetForecastIn` for another zone.
+- For rolling windows, `BudgetExceededError.ResetAt` is in UTC rather than the server's local time zone. Calendar windows still give it in the window's zone. See [Showing reset times to users](docs/budget-windows.md#showing-reset-times-to-users).
 
 ### Added
 
@@ -28,6 +35,10 @@ This release closes several ways around a budget. Four fixes change default beha
 - `otellix.ContextWithUnverifiedUser` and `otellix.ContextWithUnverifiedProject`, for your own middleware to attribute calls from IDs callers control.
 - `llm.user_verified` and `llm.project_verified` span attributes, and `llm.usage_estimated` for calls whose usage was estimated.
 - `CacheConfig.Scope`, with `CacheScopeUser`, `CacheScopeProject` and `CacheScopeGlobal`.
+- `BudgetConfig.UserStore` and `BudgetConfig.ProjectStore`, so user and project limits can have different windows: for example, a rolling 24 hours for users, which is fair in every time zone, and a calendar month for projects. See [Users in many time zones](docs/budget-windows.md#users-in-many-time-zones).
+- `GetForecastIn(key, loc)`, a forecast for the calendar month in a given time zone.
+- `BudgetWindow.String()` and `BudgetWindow.Location()`.
+- A [Spend Analytics](docs/analytics.md) guide for `GetBreakdown`, `GetForecast` and `GetOptimizationSuggestions`.
 
 ## [1.7.0] - 2026-10-24
 

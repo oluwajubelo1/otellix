@@ -124,11 +124,59 @@ This makes a real difference at the edges. At 23:30 UTC on 31 October it's alrea
 
 Daylight saving time is handled for you: a calendar day in a zone with DST can be 23 or 25 hours long, and the window follows the local calendar, not a fixed 24 hours.
 
+### Users in many time zones
+
+A calendar window has **one** time zone. Every user it limits shares the same midnight, so a daily budget set to Lagos time resets at 08:00 for a user in Tokyo, and at 18:00 the evening before (19:00 in summer) for a user in New York.
+
+The fair way to limit users around the world is a **rolling window**. "$1 in any 24 hours" means the same thing in every time zone, and there's no reset moment to game. Keep calendar windows for project and organisation budgets, which usually follow a billing month. Use the time zone your billing uses, usually UTC.
+
+Give user limits and project limits their own stores, each with its own window:
+
+```go
+budget := &otellix.BudgetConfig{
+    PerUserLimit:    1.00,  // per user, in any 24 hours
+    PerProjectLimit: 500.00, // per project, per calendar month
+    UserStore:       otellix.NewInMemoryBudgetStore(24 * time.Hour),
+    ProjectStore:    otellix.NewInMemoryBudgetStoreWithWindow(otellix.CalendarMonth(time.UTC)),
+}
+```
+
+With Redis, both stores can share a client and a prefix. Their keys don't overlap:
+
+```go
+budget := &otellix.BudgetConfig{
+    PerUserLimit:    1.00,
+    PerProjectLimit: 500.00,
+    UserStore:       otellixredis.NewRedisBudgetStore(rdb, "otellix:budget", 24*time.Hour),
+    ProjectStore:    otellixredis.NewRedisBudgetStoreWithWindow(rdb, "otellix:budget", otellix.CalendarMonth(time.UTC)),
+}
+```
+
+`UserStore` holds per-user spend and the shared `UnattributedLimit`; `ProjectStore` holds per-project spend. Either falls back to `Store` when it isn't set. A call is still checked against both before it runs: Otellix holds the estimate in the user store, then in the project store, and releases the first if the second doesn't fit.
+
+> **Why not each user's own midnight?** Users can usually change their time zone in your app's settings. If budgets reset at each user's local midnight, moving the setting a few zones east would start a "new day" and a fresh budget, as often as the user liked. A rolling window can't be reset that way.
+
+### Every instance needs the same window
+
+All instances of your app that share a Redis prefix must use the same window, including the same time zone. Load it by name everywhere, e.g. `time.LoadLocation("Africa/Lagos")`, never `time.Local`: `time.Local` is whatever zone each server happens to be set to, so two servers can disagree about when a day starts.
+
+If instances do disagree, no spend is lost: the Redis store only deletes spend that no window could still count. But they enforce different periods, so a user can be blocked by one instance and allowed by another. To catch this, each instance records its window in Redis the first time it uses each kind of budget, and reports a mismatch through the OpenTelemetry error handler:
+
+```text
+otellix: Redis budget store "otellix:budget": this instance counts user budgets over a calendar day in Africa/Lagos window,
+but another instance using the same prefix counts them over a calendar day in UTC window. No spend is lost, but the
+instances disagree about when budgets reset; give every instance the same window
+```
+
+A Redis store whose calendar window uses `time.Local` also reports a warning when it's created.
+
+> **Fixed in v1.8.0:** the Redis store deleted spend from before *its own* window's start. An instance whose day started later, such as one in a time zone further east, deleted spend that other instances still counted: in a test, $1.00 of spend dropped to $0.00.
+
 ---
 
 ## Setting the window
 
-Where you set the window depends on which store you use. **The store owns the window.** Every limit that uses that store (per user, per project and unattributed) shares its window.
+Where you set the window depends on which store you use. **The store owns the window.** Every limit that uses that store (per user, per project and unattributed) shares its window. To give user and project limits different windows, use `UserStore` and `ProjectStore`: see [Users in many time zones](#users-in-many-time-zones).
 
 ### Using the default in-memory store
 
@@ -200,10 +248,10 @@ To try this locally, start Redis with `docker-compose -f docker-compose.dev.yml 
 
 When a call is blocked, `BudgetExceededError.ResetAt` tells you when the user gets budget back. What it means depends on the window:
 
-| Window | `ResetAt` is... |
-| --- | --- |
-| `CalendarDay` / `CalendarMonth` | The start of the next period, e.g. `2026-11-01T00:00:00Z`. Everything resets then. |
-| `RollingWindow(d)` | When the oldest call still in the window drops out. Only *that* call's cost comes back at that moment, so the user may still be over the limit afterwards. |
+| Window | `ResetAt` is... | In time zone |
+| --- | --- | --- |
+| `CalendarDay` / `CalendarMonth` | The start of the next period, e.g. `2026-11-01T00:00:00Z`. Everything resets then. | The window's |
+| `RollingWindow(d)` | When the oldest call still in the window drops out. Only *that* call's cost comes back at that moment, so the user may still be over the limit afterwards. | UTC |
 
 Use it to tell users when they can try again:
 
@@ -223,6 +271,27 @@ if errors.As(err, &budgetErr) {
 
 If both a user limit and a project limit apply, the error describes whichever one has the least remaining. See [Budget Guardrails](budget-guardrails.md#which-limit-does-the-error-report).
 
+### Showing reset times to users
+
+`ResetAt` is a moment in time. Its time zone (the window's, or UTC) only affects how it prints. Convert it to the user's time zone before you show it, so a user in Tokyo isn't told their budget resets at midnight when it's 09:00 for them:
+
+```go
+loc, err := time.LoadLocation(user.TimeZone) // e.g. "Asia/Tokyo", from your user's profile
+if err != nil {
+    loc = time.UTC
+}
+msg := fmt.Sprintf("Your AI budget resets at %s.", budgetErr.ResetAt.In(loc).Format("Mon 2 Jan, 15:04 MST"))
+```
+
+For an HTTP API, send the wait as a `Retry-After` header instead. It's a number of seconds, so no time zone is involved:
+
+```go
+w.Header().Set("Retry-After", strconv.Itoa(int(time.Until(budgetErr.ResetAt).Seconds())+1))
+w.WriteHeader(http.StatusTooManyRequests)
+```
+
+> **Changed in v1.8.0:** for rolling windows, `ResetAt` used to be in the server's local time zone, so the same budget printed differently on servers in different zones. It's now in UTC.
+
 ---
 
 ## How the stores keep window data
@@ -232,7 +301,9 @@ You don't need this section to use windows, but it explains the behaviour you'll
 ### Redis
 
 - Each user, project or unattributed budget is one Redis **sorted set**. Each call is one entry, scored by the time it was made.
-- Every read and write first removes entries from before the window start, inside an atomic Lua script, so all app instances agree on the total.
+- Every read and write runs in an atomic Lua script, so all app instances agree on the total. Reads count the entries from the window's start.
+- Entries are only deleted once no window of that kind could still count them: older than 25 hours for `CalendarDay` in any time zone, 31 days and an hour for `CalendarMonth`, or the window's length for a rolling window. That way an instance with a different window can't delete spend another instance counts.
+- Each instance records its window under `<prefix>:_window:<kind>` (`user`, `project` or `unattributed`), to [notice instances that disagree](#every-instance-needs-the-same-window).
 - Each key expires once nothing in it can still count: the window's maximum length plus one hour. That's 25 hours for a 24-hour rolling window, about 32 days for `CalendarMonth`, and so on. Keys for users who stop calling clean themselves up.
 
 > **Fixed in this release:** earlier versions expired every Redis key after a fixed 48 hours. With a window longer than that, a user who made no calls for two days had their spend history deleted, and their "monthly" spend dropped to zero. Keys now live as long as the window needs.
@@ -293,8 +364,20 @@ The image has no time zone database. Add `import _ "time/tzdata"` to your `main`
 **A blocked user is still blocked after `ResetAt`.**
 With a rolling window, `ResetAt` is when the *oldest* call drops out, which may not free enough budget. Calendar windows reset fully at `ResetAt`.
 
-**Can I have a weekly calendar window, or a different window per user?**
-Not yet. All limits on a store share one window, and the calendar options are day and month. Use `RollingWindow(7 * 24 * time.Hour)` for a weekly limit. Open an issue if you need either.
+**Can I have a weekly calendar window?**
+Not yet: the calendar options are day and month. Use `RollingWindow(7 * 24 * time.Hour)` for a weekly limit. Open an issue if you need it.
+
+**Can users and projects have different windows?**
+Yes: set `UserStore` and `ProjectStore`, each with its own window. See [Users in many time zones](#users-in-many-time-zones).
+
+**Can each user have their own midnight?**
+No, deliberately: users could reset their budget by changing their time zone. Use a rolling window for per-user limits. See [Users in many time zones](#users-in-many-time-zones).
+
+**The logs say another instance counts budgets over a different window.**
+Two instances sharing a Redis prefix are configured with different windows or time zones. Give them all the same window, loaded by name. See [Every instance needs the same window](#every-instance-needs-the-same-window). After you change the window on purpose, the first instance to start reports this once; that's expected.
+
+**The logs warn that a Redis store uses `time.Local`.**
+Replace `time.Local` with a named location, e.g. `time.UTC` or `time.LoadLocation("Africa/Lagos")`.
 
 ---
 
@@ -308,9 +391,12 @@ Not yet. All limits on a store share one window, and the calendar options are da
 | `BudgetWindow.Start(now) time.Time` | The earliest moment whose spend counts at `now`. |
 | `BudgetWindow.ResetAt(now, oldest) time.Time` | When spend next drops. Calendar windows ignore `oldest`. |
 | `BudgetWindow.MaxAge() time.Duration` | The longest a call can keep counting. Stores use it to expire data. |
+| `BudgetWindow.Location() *time.Location` | The time zone a calendar window resets in, or nil for a rolling window. |
+| `BudgetWindow.String() string` | A description, e.g. `"calendar month in Africa/Lagos"`. |
 | `otellix.NewInMemoryBudgetStoreWithWindow(w)` | In-memory store with window `w`. |
 | `otellixredis.NewRedisBudgetStoreWithWindow(client, prefix, w)` | Redis store with window `w`. |
 | `BudgetConfig.Window *BudgetWindow` | Window for the default in-memory store. Ignored when `Store` is set. |
+| `BudgetConfig.UserStore`, `BudgetConfig.ProjectStore` | Separate stores, so user and project limits can have different windows. Default: `Store`. |
 | `otellix.DefaultBudgetInterval` | The default rolling window length: 24 hours. |
 
 The zero value `otellix.BudgetWindow{}` is a rolling 24-hour window.

@@ -146,6 +146,7 @@ Otellix populates your spans with industry-standard attributes:
 *   [**Budget Windows**](docs/budget-windows.md) — Rolling, daily and monthly budgets, time zones and resets.
 *   [**Unpriced Models**](docs/unpriced-models.md) — Making sure models with no price still count against budgets.
 *   [**Cost Attribution**](docs/attribution.md) — Who spent what, and capping calls with no user.
+*   [**Spend Analytics**](docs/analytics.md) — Breakdowns, monthly forecasts and cheaper-model suggestions from recent calls.
 *   [**Metric Labels & Cardinality**](docs/metric-labels.md) — Dropping the `user_id` label so metrics scale to many users.
 *   [**SDK Middleware**](docs/sdk-middleware.md) — Trace and budget existing OpenAI and Anthropic SDK clients with one option.
 *   [**Integrations**](docs/integrations.md) — LangChainGo setup.
