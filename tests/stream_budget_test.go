@@ -198,17 +198,15 @@ func TestTraceStreamStoreCalls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer func() { _ = stream.Close() }()
 		store.reset() // ignore the reservation made before the stream started
-		received := 0
-		for {
+		for i := range events {
 			if _, err := stream.Recv(); err != nil {
-				break
+				t.Fatalf("event %d: %v", i+1, err)
 			}
-			received++
 		}
-		if received != events {
-			t.Fatalf("expected %d events, got %d", events, received)
-		}
+		// Count before the stream ends: closing it may read spend to print
+		// the budget, when a dev printer is set up.
 		return store.calls()
 	}
 

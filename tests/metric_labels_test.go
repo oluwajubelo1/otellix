@@ -61,7 +61,12 @@ func readMetrics(t *testing.T) metricdata.ResourceMetrics {
 	return rm
 }
 
-// costLabelSets returns the label sets recorded on the cost metric for model.
+// metricLabelsFeature is the feature ID only TestMetricLabels uses, so the
+// series it checks aren't mixed with other tests' calls to the same model.
+const metricLabelsFeature = "metric-labels-test"
+
+// costLabelSets returns the label sets recorded on the cost metric for
+// model by TestMetricLabels.
 func costLabelSets(t *testing.T, model string) []attribute.Set {
 	t.Helper()
 	var sets []attribute.Set
@@ -72,7 +77,9 @@ func costLabelSets(t *testing.T, model string) []attribute.Set {
 				continue
 			}
 			for _, dp := range sum.DataPoints {
-				if v, _ := dp.Attributes.Value("model"); v.AsString() == model {
+				m, _ := dp.Attributes.Value("model")
+				f, _ := dp.Attributes.Value("feature_id")
+				if m.AsString() == model && f.AsString() == metricLabelsFeature {
 					sets = append(sets, dp.Attributes)
 				}
 			}
@@ -90,7 +97,7 @@ func TestMetricLabels(t *testing.T) {
 	call := func(model string) {
 		mock := &providers.MockProvider{ProviderName: "openai", Result: providers.CallResult{OutputTokens: 10}}
 		if _, err := otellix.Trace(context.Background(), mock, providers.CallParams{Model: model},
-			otellix.WithUserID("usr_1"), otellix.WithProjectID("acme"), otellix.WithFeatureID("chat")); err != nil {
+			otellix.WithUserID("usr_1"), otellix.WithProjectID("acme"), otellix.WithFeatureID(metricLabelsFeature)); err != nil {
 			t.Fatal(err)
 		}
 	}
