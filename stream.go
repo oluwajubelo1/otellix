@@ -272,6 +272,23 @@ func (s *Stream) Close() error {
 	costCounter.Add(s.ctx, s.costUSD, metricAttrs)
 	latencyHist.Record(s.ctx, latencyMs, metricAttrs)
 
+	// Record the call for GetBreakdown and GetForecast, as Trace does, so
+	// streamed spend isn't missing from them.
+	recordCall(CallRecord{
+		Timestamp:        time.Now(),
+		Provider:         s.cfg.Provider,
+		Model:            s.cfg.Model,
+		FeatureID:        s.cfg.FeatureID,
+		UserID:           s.cfg.UserID,
+		ProjectID:        s.cfg.ProjectID,
+		InputTokens:      s.inputTokens,
+		OutputTokens:     s.outputTokens,
+		CacheReadTokens:  s.cacheReadTokens,
+		CacheWriteTokens: s.cacheWriteTokens,
+		CostUSD:          s.costUSD,
+		LatencyMs:        latencyMs,
+	})
+
 	if s.enforcer != nil {
 		s.enforcer.Record(s.ctx, s.cfg.UserID, s.cfg.ProjectID, s.costUSD)
 		for _, h := range s.holds {

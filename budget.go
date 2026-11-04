@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -73,6 +74,17 @@ type BudgetConfig struct {
 
 	// Store is the backing store for budget data. Default: in-memory.
 	Store BudgetStore
+
+	// UserStore, when set, holds the spend for per-user limits and
+	// UnattributedLimit instead of Store, so they can have a different
+	// window from project limits. For example, a rolling 24-hour window for
+	// users is fair in every time zone, while project limits follow your
+	// billing month. Default: Store.
+	UserStore BudgetStore
+
+	// ProjectStore, when set, holds the spend for per-project limits
+	// instead of Store. Default: Store.
+	ProjectStore BudgetStore
 
 	// EstimatedOutputTokens is how many output tokens the pre-call budget
 	// check assumes a call will produce, capped at params.MaxTokens when that
@@ -251,6 +263,10 @@ type BudgetReserver interface {
 }
 
 // BudgetExceededError is returned when a call is blocked by budget enforcement.
+//
+// ResetAt is in the window's time zone for calendar windows, and in UTC for
+// rolling ones. To show it to a user, convert it to theirs with
+// ResetAt.In(userLocation).
 type BudgetExceededError struct {
 	UserID       string
 	ProjectID    string
@@ -429,26 +445,55 @@ const unattributedKey = "unattributed"
 // BudgetEnforcer checks and records budget usage.
 type BudgetEnforcer struct {
 	config *BudgetConfig
-	store  BudgetStore
+	// userStore holds per-user and unattributed spend, projectStore
+	// per-project spend. Both are config.Store unless split is set.
+	userStore    BudgetStore
+	projectStore BudgetStore
+	split        bool
 }
 
 // defaultStoreMu guards the lazy creation of a config's default store, so
 // concurrent first calls on the same config share one store.
 var defaultStoreMu sync.Mutex
 
-// NewBudgetEnforcer creates a new enforcer. Uses InMemoryBudgetStore if config.Store is nil.
+// NewBudgetEnforcer creates a new enforcer. Uses InMemoryBudgetStore if
+// config.Store is nil and a limit needs it.
 func NewBudgetEnforcer(config *BudgetConfig) *BudgetEnforcer {
 	defaultStoreMu.Lock()
 	defer defaultStoreMu.Unlock()
 
-	if config.Store == nil {
+	if config.Store == nil && (config.UserStore == nil || config.ProjectStore == nil) {
 		window := RollingWindow(config.ResetInterval)
 		if config.Window != nil {
 			window = *config.Window
 		}
 		config.Store = NewInMemoryBudgetStoreWithWindow(window)
 	}
-	return &BudgetEnforcer{config: config, store: config.Store}
+
+	e := &BudgetEnforcer{
+		config:       config,
+		userStore:    config.Store,
+		projectStore: config.Store,
+		split:        config.UserStore != nil || config.ProjectStore != nil,
+	}
+	if config.UserStore != nil {
+		e.userStore = config.UserStore
+	}
+	if config.ProjectStore != nil {
+		e.projectStore = config.ProjectStore
+	}
+	return e
+}
+
+// projectKeyPrefix starts the store key of every per-project budget.
+const projectKeyPrefix = "project:"
+
+// storeFor returns the store that holds key's spend.
+func (e *BudgetEnforcer) storeFor(key string) BudgetStore {
+	if strings.HasPrefix(key, projectKeyPrefix) {
+		return e.projectStore
+	}
+	return e.userStore
 }
 
 // userBudget returns the store key and limit that apply to userID: the
@@ -475,9 +520,39 @@ func (e *BudgetEnforcer) limits(userID, projectID string) []BudgetLimit {
 		limits = append(limits, BudgetLimit{Key: key, Limit: limit})
 	}
 	if l := e.config.projectLimit(); l > 0 && projectID != "" {
-		limits = append(limits, BudgetLimit{Key: "project:" + projectID, Limit: l})
+		limits = append(limits, BudgetLimit{Key: projectKeyPrefix + projectID, Limit: l})
 	}
 	return limits
+}
+
+// limitGroup is the limits held in one store.
+type limitGroup struct {
+	store  BudgetStore
+	limits []BudgetLimit
+}
+
+// groups splits limits by the store that holds them, user limits first.
+// With one store, they stay together, so they're reserved in one step.
+func (e *BudgetEnforcer) groups(limits []BudgetLimit) []limitGroup {
+	if !e.split {
+		return []limitGroup{{store: e.userStore, limits: limits}}
+	}
+	var user, project []BudgetLimit
+	for _, l := range limits {
+		if strings.HasPrefix(l.Key, projectKeyPrefix) {
+			project = append(project, l)
+		} else {
+			user = append(user, l)
+		}
+	}
+	var groups []limitGroup
+	if len(user) > 0 {
+		groups = append(groups, limitGroup{store: e.userStore, limits: user})
+	}
+	if len(project) > 0 {
+		groups = append(groups, limitGroup{store: e.projectStore, limits: project})
+	}
+	return groups
 }
 
 // Check determines whether a call is allowed given current budget usage.
@@ -487,7 +562,7 @@ func (e *BudgetEnforcer) limits(userID, projectID string) []BudgetLimit {
 // and together overshoot a limit. Use Reserve to prevent that.
 func (e *BudgetEnforcer) Check(ctx context.Context, userID, projectID string, estimatedCost float64) (bool, FallbackAction) {
 	for _, l := range e.limits(userID, projectID) {
-		if e.store.GetSpend(ctx, l.Key)+estimatedCost > l.Limit {
+		if e.storeFor(l.Key).GetSpend(ctx, l.Key)+estimatedCost > l.Limit {
 			return false, e.config.FallbackAction
 		}
 	}
@@ -497,10 +572,15 @@ func (e *BudgetEnforcer) Check(ctx context.Context, userID, projectID string, es
 // Reservation is spend held against a call's budgets while the call runs,
 // so calls made at the same time can't all pass the budget check at once.
 type Reservation struct {
+	holds []hold
+	once  sync.Once
+}
+
+// hold is spend held in one store.
+type hold struct {
 	store BudgetReserver
 	id    string
 	keys  []string
-	once  sync.Once
 }
 
 // Release drops the hold. It is safe to call more than once, and on a nil
@@ -512,7 +592,10 @@ func (r *Reservation) Release(ctx context.Context) {
 	r.once.Do(func() {
 		// Release even if ctx was cancelled, or the hold would count against
 		// the budget until it falls out of the window.
-		r.store.Release(context.WithoutCancel(ctx), r.id, r.keys)
+		ctx := context.WithoutCancel(ctx)
+		for _, h := range r.holds {
+			h.store.Release(ctx, h.id, h.keys)
+		}
 	})
 }
 
@@ -520,47 +603,65 @@ func (r *Reservation) Release(ctx context.Context) {
 // to the call and, if it does, holds it until the returned Reservation is
 // released. Record the call's actual cost with Record, then release the hold.
 //
+// Limits in one store are checked and held in one atomic step. With a
+// separate UserStore and ProjectStore, each store is held in turn, and if
+// one doesn't fit, the holds already made are released.
+//
 // It returns a nil Reservation when nothing was held: no limit applies, the
-// call isn't allowed, or the store doesn't implement BudgetReserver, in which
-// case it falls back to Check.
+// call isn't allowed, or the stores don't implement BudgetReserver, in which
+// case it falls back to checking them.
 func (e *BudgetEnforcer) Reserve(ctx context.Context, userID, projectID string, estimatedCost float64) (*Reservation, bool) {
 	limits := e.limits(userID, projectID)
 	if len(limits) == 0 {
 		return nil, true
 	}
-	reserver, ok := e.store.(BudgetReserver)
-	if !ok {
-		allowed, _ := e.Check(ctx, userID, projectID, estimatedCost)
-		return nil, allowed
+
+	res := &Reservation{}
+	for _, g := range e.groups(limits) {
+		reserver, ok := g.store.(BudgetReserver)
+		if !ok {
+			for _, l := range g.limits {
+				if g.store.GetSpend(ctx, l.Key)+estimatedCost > l.Limit {
+					res.Release(ctx)
+					return nil, false
+				}
+			}
+			continue
+		}
+
+		id, ok, err := reserver.Reserve(ctx, estimatedCost, g.limits)
+		if err != nil {
+			// Fail open, as GetSpend does when the store is unreachable: a
+			// budget store outage shouldn't stop every LLM call.
+			otel.Handle(fmt.Errorf("otellix: budget reservation failed, allowing the call: %w", err))
+			continue
+		}
+		if !ok {
+			res.Release(ctx)
+			return nil, false
+		}
+		keys := make([]string, len(g.limits))
+		for i, l := range g.limits {
+			keys[i] = l.Key
+		}
+		res.holds = append(res.holds, hold{store: reserver, id: id, keys: keys})
 	}
 
-	id, ok, err := reserver.Reserve(ctx, estimatedCost, limits)
-	if err != nil {
-		// Fail open, as GetSpend does when the store is unreachable: a budget
-		// store outage shouldn't stop every LLM call.
-		otel.Handle(fmt.Errorf("otellix: budget reservation failed, allowing the call: %w", err))
+	if len(res.holds) == 0 {
 		return nil, true
 	}
-	if !ok {
-		return nil, false
-	}
-
-	keys := make([]string, len(limits))
-	for i, l := range limits {
-		keys[i] = l.Key
-	}
-	return &Reservation{store: reserver, id: id, keys: keys}, true
+	return res, true
 }
 
 // Record adds actual cost to the budget store after a successful call.
 func (e *BudgetEnforcer) Record(ctx context.Context, userID, projectID string, actualCost float64) {
 	if userID != "" {
-		e.store.AddSpend(ctx, "user:"+userID, actualCost)
+		e.userStore.AddSpend(ctx, "user:"+userID, actualCost)
 	} else if e.config.UnattributedLimit > 0 {
-		e.store.AddSpend(ctx, unattributedKey, actualCost)
+		e.userStore.AddSpend(ctx, unattributedKey, actualCost)
 	}
 	if projectID != "" {
-		e.store.AddSpend(ctx, "project:"+projectID, actualCost)
+		e.projectStore.AddSpend(ctx, projectKeyPrefix+projectID, actualCost)
 	}
 }
 
@@ -570,13 +671,13 @@ func (e *BudgetEnforcer) Remaining(userID, projectID string) float64 {
 	remaining := float64(1<<63 - 1) // start at max
 
 	if key, limit := e.userBudget(userID); key != "" {
-		userRemaining := limit - e.store.GetSpend(ctx, key)
+		userRemaining := limit - e.userStore.GetSpend(ctx, key)
 		if userRemaining < remaining {
 			remaining = userRemaining
 		}
 	}
 	if e.config.projectLimit() > 0 && projectID != "" {
-		projRemaining := e.config.projectLimit() - e.store.GetSpend(ctx, "project:"+projectID)
+		projRemaining := e.config.projectLimit() - e.projectStore.GetSpend(ctx, projectKeyPrefix+projectID)
 		if projRemaining < remaining {
 			remaining = projRemaining
 		}
@@ -590,11 +691,11 @@ func (e *BudgetEnforcer) Remaining(userID, projectID string) float64 {
 func (e *BudgetEnforcer) tightestBudget(ctx context.Context, userID, projectID string) (key string, usage, limit float64) {
 	if k, l := e.userBudget(userID); k != "" {
 		key, limit = k, l
-		usage = e.store.GetSpend(ctx, k)
+		usage = e.userStore.GetSpend(ctx, k)
 	}
 	if l := e.config.projectLimit(); l > 0 && projectID != "" {
-		k := "project:" + projectID
-		u := e.store.GetSpend(ctx, k)
+		k := projectKeyPrefix + projectID
+		u := e.projectStore.GetSpend(ctx, k)
 		if key == "" || l-u < limit-usage {
 			key, usage, limit = k, u, l
 		}
@@ -625,7 +726,7 @@ func (e *BudgetEnforcer) BudgetError(userID, projectID string) *BudgetExceededEr
 
 	var resetAt time.Time
 	if key != "" {
-		resetAt = e.store.GetResetTime(ctx, key)
+		resetAt = e.storeFor(key).GetResetTime(ctx, key)
 	}
 
 	return &BudgetExceededError{

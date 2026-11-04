@@ -55,6 +55,8 @@ The central policy object. It sets the limits, what happens when one is hit, and
 | `FallbackAction` | `FallbackAction` | `FallbackBlock` | What happens when a limit is hit. See [Fallback actions](#fallback-actions). |
 | `FallbackModel` | `string` | `""` | The cheaper model used by `FallbackDowngrade`. |
 | `Store` | `BudgetStore` | in-memory | Where spend is kept. See [Budget stores](#2-budget-stores-otellixbudgetstore). |
+| `UserStore` | `BudgetStore` | `Store` | Where per-user and unattributed spend is kept, when it needs a different window from projects, e.g. rolling 24 hours for users. See [Users in many time zones](budget-windows.md#users-in-many-time-zones). |
+| `ProjectStore` | `BudgetStore` | `Store` | Where per-project spend is kept, e.g. with a calendar month window. |
 | `Window` | `*BudgetWindow` | rolling 24h | The window for the **default** in-memory store. Ignored when `Store` is set. See [Budget Windows](budget-windows.md). |
 | `ResetInterval` | `time.Duration` | `24h` | Older way to set a rolling window for the default store. Ignored when `Store` or `Window` is set. |
 | `EstimatedOutputTokens` | `int64` | `500` | Output tokens the pre-call estimate assumes, capped at `params.MaxTokens`. See [Cost estimates](budget-reservations.md#how-the-estimate-is-worked-out). |
@@ -252,4 +254,4 @@ if errors.As(err, &budgetErr) {
 | `ProjectID` | The call's project ID |
 | `CurrentSpend` | USD spent in the window, for the budget that blocked |
 | `Limit` | That budget's limit |
-| `ResetAt` | When that budget next frees up. See [Resets](budget-windows.md#resets-and-resetat). |
+| `ResetAt` | When that budget next frees up: in the window's time zone for calendar windows, UTC for rolling ones. Convert it to the user's time zone to show it. See [Showing reset times to users](budget-windows.md#showing-reset-times-to-users). |

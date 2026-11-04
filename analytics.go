@@ -123,20 +123,31 @@ type ForecastReport struct {
 	DaysRemainingInMonth int
 }
 
-// GetForecast projects monthly spend based on current burn rate.
+// GetForecast projects monthly spend based on current burn rate, for the
+// calendar month in UTC, the default time zone for budget windows. Use
+// GetForecastIn for another time zone.
 // The key parameter filters results:
 //   - "" (empty): returns global forecast across all calls
 //   - "user:userid": returns forecast for a specific user
 //   - "project:projectid": returns forecast for a specific project
 func GetForecast(key string) ForecastReport {
+	return GetForecastIn(key, time.UTC)
+}
+
+// GetForecastIn is GetForecast for the calendar month in loc, such as the
+// time zone of a CalendarMonth budget, so the two agree on when the month
+// starts. A nil loc means UTC.
+func GetForecastIn(key string, loc *time.Location) ForecastReport {
+	if loc == nil {
+		loc = time.UTC
+	}
 	trackerMu.RLock()
 	snapshot := make([]CallRecord, len(callRecords))
 	copy(snapshot, callRecords)
 	trackerMu.RUnlock()
 
-	now := time.Now()
+	now := time.Now().In(loc)
 	year, month, _ := now.Date()
-	loc := now.Location()
 	startOfMonth := time.Date(year, month, 1, 0, 0, 0, 0, loc)
 	daysInMonth := daysIn(month, year)
 	daysElapsed := now.Day()
