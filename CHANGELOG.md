@@ -2,6 +2,31 @@
 
 All notable changes to Otellix are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Otellix uses [Semantic Versioning](https://semver.org/). For releases before v1.6.0, see the [GitHub releases](https://github.com/oluwajubelo1/otellix/releases).
 
+## [Unreleased]
+
+This release closes several ways around a budget. Three fixes change default behaviour, listed first: read them before upgrading.
+
+### Changed (breaking)
+
+- **Budgets only apply limits to verified identity.** The HTTP middleware read the user from a JWT without checking its signature, and the project from the `X-Project-ID` header, so a caller could send a new user ID with every request to get a fresh per-user budget, or name another tenant's project to spend its budget. Otellix now tracks whether each ID was verified. If a budget limit would depend on an unverified one, the call returns `*otellix.UnverifiedIdentityError` and the provider isn't called. IDs from `WithUserFromContext`, `WithProjectFromContext`, the new `WithVerifiedJWT`, `WithUserID`/`WithProjectID` and `ContextWithUser`/`ContextWithProject` are verified. Unverified IDs still attribute calls on spans and in metrics. See [Verified Identity & Budgets](docs/verified-identity.md).
+- **The middleware no longer reads `X-Project-ID` by default.** Read the project from your auth with `WithProjectFromContext`, or opt back in, unverified, with `WithProjectHeader("X-Project-ID")`.
+- **Request deduplication keeps results within a user by default.** Identical requests from different users, including across tenants, were served each other's results. The new `CacheConfig.Scope` defaults to `CacheScopeUser`; `CacheScopeProject` shares within a project, and `CacheScopeGlobal` keeps the old behaviour. See [Request Deduplication](docs/request-deduplication.md#who-shares-results-scope).
+- With the Fiber middleware, upgrade `middleware/fiber` to v0.2.0 alongside this release. Earlier Fiber versions can't mark IDs as verified, so budgets treat all their IDs as unverified.
+
+### Fixed
+
+- **Concurrent streams could overshoot a budget.** A stream held only its estimate, and what it spent beyond that was invisible to other calls until it finished: 5 streams at once against a $0.05 limit spent $0.25. A stream now reserves more, atomically, as soon as it runs past what it holds, so concurrent streams can't overshoot together. This needs no new store method.
+- **Streams read to the end without `Close()` weren't charged.** A stream is now finished, and its cost recorded, at `io.EOF` or on an error. A stream that fails part way is charged for what it streamed, and its span marked as an error.
+- **SDK responses without usage cost $0.** Some OpenAI-compatible servers and proxies leave `usage` out, and the SDK middleware recorded zero tokens. It now charges an estimate and sets `llm.usage_estimated` on the span.
+- The dedup cache key left out `Temperature` and `Extra`, so a request with tools or a response format could be served the result of one without. Both are now in the key, and the key's fields can no longer run into each other.
+
+### Added
+
+- `WithVerifiedJWT(keyFunc, opts...)` middleware option, which checks the JWT's signature and expiry before reading the user.
+- `otellix.ContextWithUnverifiedUser` and `otellix.ContextWithUnverifiedProject`, for your own middleware to attribute calls from IDs callers control.
+- `llm.user_verified` and `llm.project_verified` span attributes, and `llm.usage_estimated` for calls whose usage was estimated.
+- `CacheConfig.Scope`, with `CacheScopeUser`, `CacheScopeProject` and `CacheScopeGlobal`.
+
 ## [1.7.0] - 2026-10-24
 
 ### Added
@@ -44,6 +69,7 @@ All notable changes to Otellix are documented here. The format follows [Keep a C
 - The bundled Grafana dashboard's unattributed panels filter on `user_attributed="false"` instead of `user_id=""`.
 - `BudgetExceededError.CurrentSpend` and `BudgetStatus.Usage` include the holds of calls still in flight.
 
+[Unreleased]: https://github.com/oluwajubelo1/otellix/compare/v1.7.0...HEAD
 [1.7.0]: https://github.com/oluwajubelo1/otellix/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/oluwajubelo1/otellix/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/oluwajubelo1/otellix/compare/v1.5.0...v1.6.0

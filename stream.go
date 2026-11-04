@@ -2,6 +2,8 @@ package otellix
 
 import (
 	"context"
+	"errors"
+	"io"
 	"time"
 
 	"github.com/oluwajubelo1/otellix/providers"
@@ -14,13 +16,20 @@ import (
 // Stream wraps a provider stream to add OpenTelemetry tracing, budget constraints,
 // and cost aggregations over the streamed responses.
 type Stream struct {
-	base        providers.Stream
-	ctx         context.Context
-	span        trace.Span
-	cfg         *Config
-	enforcer    *BudgetEnforcer
-	reservation *Reservation
-	pricing     PricingEntry
+	base     providers.Stream
+	ctx      context.Context
+	span     trace.Span
+	cfg      *Config
+	enforcer *BudgetEnforcer
+	pricing  PricingEntry
+
+	// Budget holds for the stream's cost, and how much cost they cover. For
+	// a store that can't hold spend, covered counts cost that passed a check.
+	holds   []*Reservation
+	covered float64
+	// overLimit is set once the stream couldn't cover its cost but carried
+	// on, under FallbackNotify or FallbackDowngrade.
+	overLimit bool
 
 	// Aggregated metrics
 	inputTokens      int64
@@ -30,10 +39,8 @@ type Stream struct {
 	costUSD          float64
 	start            time.Time
 
-	// Budget headroom at the last read of the store, and when that was.
-	headroom  float64
-	checkedAt time.Time
-
+	// err is the error the stream ended with, other than io.EOF.
+	err    error
 	closed bool
 }
 
@@ -55,17 +62,24 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 
 	var enforcer *BudgetEnforcer
 	var reservation *Reservation
+	var covered float64
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)
+		if err := cfg.unverifiedIdentityError(); err != nil {
+			return nil, err
+		}
 		if err := cfg.unpricedError(); err != nil {
 			return nil, err
 		}
 
 		// Hold the estimated cost until the stream is closed. Recv still
 		// cuts the stream off if it runs past the budget.
+		estimate := cfg.estimateCost(params)
 		var allowed bool
-		reservation, allowed = enforcer.Reserve(ctx, cfg.UserID, cfg.ProjectID, cfg.estimateCost(params))
-		if !allowed {
+		reservation, allowed = enforcer.Reserve(ctx, cfg.UserID, cfg.ProjectID, estimate)
+		if allowed {
+			covered = estimate
+		} else {
 			switch cfg.BudgetConfig.FallbackAction {
 			case FallbackBlock:
 				return nil, enforcer.BudgetError(cfg.UserID, cfg.ProjectID)
@@ -95,6 +109,7 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 		attribute.String("llm.project_id", cfg.ProjectID),
 		attribute.Bool("llm.user_attributed", cfg.UserID != ""),
 	)
+	cfg.setIdentityAttributes(span)
 
 	for k, v := range cfg.Attributes {
 		span.SetAttributes(attribute.String(k, v))
@@ -119,21 +134,36 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 	}
 
 	return &Stream{
-		base:        baseStream,
-		ctx:         ctx,
-		span:        span,
-		cfg:         cfg,
-		enforcer:    enforcer,
-		reservation: reservation,
-		pricing:     pricing,
-		start:       start,
+		base:     baseStream,
+		ctx:      ctx,
+		span:     span,
+		cfg:      cfg,
+		enforcer: enforcer,
+		pricing:  pricing,
+		holds:    holdsOf(reservation),
+		covered:  covered,
+		start:    start,
 	}, nil
+}
+
+// holdsOf returns the holds list for a stream's first reservation.
+func holdsOf(r *Reservation) []*Reservation {
+	if r == nil {
+		return nil
+	}
+	return []*Reservation{r}
 }
 
 // Recv returns the next token from the stream and updates budget/telemetry.
 func (s *Stream) Recv() (providers.StreamEvent, error) {
 	evt, err := s.base.Recv()
 	if err != nil {
+		// Finish the stream here, so its cost is recorded even if the
+		// caller stops at io.EOF without calling Close.
+		if !errors.Is(err, io.EOF) {
+			s.err = err
+		}
+		_ = s.Close()
 		return evt, err
 	}
 
@@ -158,10 +188,13 @@ func (s *Stream) Recv() (providers.StreamEvent, error) {
 	// Update cost progressively
 	s.costUSD = s.pricing.cost(s.result())
 
-	if s.enforcer != nil && s.cfg.BudgetConfig.FallbackAction == FallbackBlock && s.overBudget() {
-		s.span.AddEvent("budget.aborted")
-		_ = s.Close() // the budget error is what the caller needs
-		return evt, s.enforcer.BudgetError(s.cfg.UserID, s.cfg.ProjectID)
+	if s.enforcer != nil && !s.overLimit && !s.cover() {
+		if s.cfg.BudgetConfig.FallbackAction == FallbackBlock {
+			s.span.AddEvent("budget.aborted")
+			_ = s.Close() // the budget error is what the caller needs
+			return evt, s.enforcer.BudgetError(s.cfg.UserID, s.cfg.ProjectID)
+		}
+		s.overLimit = true
 	}
 
 	return evt, nil
@@ -177,25 +210,31 @@ func (s *Stream) result() providers.CallResult {
 	}
 }
 
-// streamBudgetRecheck is how often a stream re-reads spend from the budget
-// store while it has headroom, to notice spend by other calls.
-const streamBudgetRecheck = time.Second
-
-// overBudget reports whether the stream's cost so far takes it over budget.
-//
-// It reads spend from the store only on the first token, when the cost
-// would use up the headroom seen at the last read, and at most once per
-// streamBudgetRecheck otherwise, rather than on every token. With a Redis
-// store that is a few round trips per stream instead of two per token.
-func (s *Stream) overBudget() bool {
-	// Spend includes this stream's own hold, so only the cost beyond it counts.
-	extra := s.costUSD - s.reservation.held()
-	if !s.checkedAt.IsZero() && extra <= s.headroom && time.Since(s.checkedAt) < streamBudgetRecheck {
-		return false
+// cover makes sure the stream's cost so far is held against its budgets.
+// When the stream runs past what it holds, it reserves more: as much again
+// as it already covers, so a long stream makes few store calls, or just
+// what it needs when that won't fit. Every cost is held before the stream
+// goes on, so streams running at the same time can't together overshoot a
+// limit. It returns false when even the cost so far doesn't fit.
+func (s *Stream) cover() bool {
+	need := s.costUSD - s.covered
+	if need <= 0 {
+		return true
 	}
-	s.headroom = s.enforcer.headroom(s.ctx, s.cfg.UserID, s.cfg.ProjectID)
-	s.checkedAt = time.Now()
-	return extra > s.headroom
+	amounts := []float64{need}
+	if s.covered > need {
+		amounts = []float64{s.covered, need}
+	}
+	for _, amount := range amounts {
+		if res, ok := s.enforcer.Reserve(s.ctx, s.cfg.UserID, s.cfg.ProjectID, amount); ok {
+			if res != nil {
+				s.holds = append(s.holds, res)
+			}
+			s.covered += amount
+			return true
+		}
+	}
+	return false
 }
 
 // Close finalizes the stream, computes total metrics, and ends the trace span.
@@ -209,7 +248,12 @@ func (s *Stream) Close() error {
 	latencyMs := float64(time.Since(s.start).Milliseconds())
 
 	// Finalize OTel Span
-	s.span.SetStatus(codes.Ok, "")
+	if s.err != nil {
+		s.span.SetStatus(codes.Error, s.err.Error())
+		s.span.SetAttributes(attribute.Bool("llm.error", true), attribute.String("llm.error_message", s.err.Error()))
+	} else {
+		s.span.SetStatus(codes.Ok, "")
+	}
 	s.span.SetAttributes(
 		attribute.Int64("llm.input_tokens", s.inputTokens),
 		attribute.Int64("llm.output_tokens", s.outputTokens),
@@ -230,7 +274,9 @@ func (s *Stream) Close() error {
 
 	if s.enforcer != nil {
 		s.enforcer.Record(s.ctx, s.cfg.UserID, s.cfg.ProjectID, s.costUSD)
-		s.reservation.Release(s.ctx)
+		for _, h := range s.holds {
+			h.Release(s.ctx)
+		}
 	}
 
 	if devPrinter != nil {

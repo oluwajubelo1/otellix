@@ -3,7 +3,6 @@ package otellix
 import (
 	"context"
 	"fmt"
-	"math"
 	"slices"
 	"strconv"
 	"sync"
@@ -120,6 +119,45 @@ type UnpricedModelError struct {
 func (e *UnpricedModelError) Error() string {
 	return fmt.Sprintf("otellix: no pricing for %s/%s, so its cost can't be checked against the budget; add it with otellix.RegisterModel",
 		e.Provider, e.Model)
+}
+
+// UnverifiedIdentityError is returned when a budget limit would apply to a
+// user or project ID that wasn't verified: one the HTTP middleware read from
+// an unverified JWT or a header, which callers can set to anything. A limit
+// on such an ID could be dodged by sending a new one with each request, or
+// pointed at someone else's budget. The provider isn't called.
+type UnverifiedIdentityError struct {
+	// Kind is "user" or "project".
+	Kind string
+	// ID is the unverified ID.
+	ID string
+}
+
+func (e *UnverifiedIdentityError) Error() string {
+	fix := "WithVerifiedJWT or WithUserFromContext, or set it with otellix.ContextWithUser"
+	if e.Kind == "project" {
+		fix = "WithProjectFromContext, or set it with otellix.ContextWithProject"
+	}
+	return fmt.Sprintf("otellix: a budget limit applies to %s ID %q, which wasn't verified: it came from an unverified JWT or a header, which callers can set to anything. Verify it in the middleware with %s after your own auth check (the Fiber middleware needs v0.2.0 or later for this). See docs/verified-identity.md",
+		e.Kind, e.ID, fix)
+}
+
+// unverifiedIdentityError returns an UnverifiedIdentityError if a budget
+// limit would depend on an unverified user or project ID. A user ID matters
+// to per-user limits, and to UnattributedLimit, which a call escapes by
+// having any user ID.
+func (c *Config) unverifiedIdentityError() error {
+	bc := c.BudgetConfig
+	if bc == nil {
+		return nil
+	}
+	if c.userUnverified && c.UserID != "" && (bc.userLimit() > 0 || bc.UnattributedLimit > 0) {
+		return &UnverifiedIdentityError{Kind: "user", ID: c.UserID}
+	}
+	if c.projectUnverified && c.ProjectID != "" && bc.projectLimit() > 0 {
+		return &UnverifiedIdentityError{Kind: "project", ID: c.ProjectID}
+	}
+	return nil
 }
 
 // defaultEstimatedOutputTokens is the output assumed by the pre-call budget
@@ -436,24 +474,13 @@ func (e *BudgetEnforcer) Check(ctx context.Context, userID, projectID string, es
 	return true, e.config.FallbackAction
 }
 
-// headroom returns how much more can be spent before the tightest limit
-// that applies is exceeded, or +Inf if no limit applies.
-func (e *BudgetEnforcer) headroom(ctx context.Context, userID, projectID string) float64 {
-	headroom := math.Inf(1)
-	for _, l := range e.limits(userID, projectID) {
-		headroom = min(headroom, l.Limit-e.store.GetSpend(ctx, l.Key))
-	}
-	return headroom
-}
-
 // Reservation is spend held against a call's budgets while the call runs,
 // so calls made at the same time can't all pass the budget check at once.
 type Reservation struct {
-	store  BudgetReserver
-	id     string
-	keys   []string
-	amount float64
-	once   sync.Once
+	store BudgetReserver
+	id    string
+	keys  []string
+	once  sync.Once
 }
 
 // Release drops the hold. It is safe to call more than once, and on a nil
@@ -467,14 +494,6 @@ func (r *Reservation) Release(ctx context.Context) {
 		// the budget until it falls out of the window.
 		r.store.Release(context.WithoutCancel(ctx), r.id, r.keys)
 	})
-}
-
-// held returns the amount held, or 0 for a nil Reservation.
-func (r *Reservation) held() float64 {
-	if r == nil {
-		return 0
-	}
-	return r.amount
 }
 
 // Reserve checks whether estimatedCost fits within every budget that applies
@@ -510,7 +529,7 @@ func (e *BudgetEnforcer) Reserve(ctx context.Context, userID, projectID string, 
 	for i, l := range limits {
 		keys[i] = l.Key
 	}
-	return &Reservation{store: reserver, id: id, keys: keys, amount: estimatedCost}, true
+	return &Reservation{store: reserver, id: id, keys: keys}, true
 }
 
 // Record adds actual cost to the budget store after a successful call.

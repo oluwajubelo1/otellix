@@ -48,8 +48,11 @@ Gin, Echo and Fiber middleware set the context for every request automatically, 
 For each of `user_id` and `project_id`, Otellix uses the first one it finds:
 
 1. The `WithUserID` / `WithProjectID` option on the call.
-2. The value on the context, whether from `ContextWithUser` / `ContextWithProject` or from middleware.
-3. Nothing: the call is **unattributed** for that identifier.
+2. A verified value on the context: from `ContextWithUser` / `ContextWithProject`, or from middleware that verified it.
+3. An unverified value on the context: from `ContextWithUnverifiedUser` / `ContextWithUnverifiedProject`, or from middleware reading an unverified JWT or a header.
+4. Nothing: the call is **unattributed** for that identifier.
+
+Budgets never apply a limit to an unverified value. See [Trusting the identity](#trusting-the-identity).
 
 The user and project are resolved separately. A call can take its user from an option and its project from the context.
 
@@ -232,11 +235,17 @@ Because the limit is shared, one noisy anonymous caller can use it up for every 
 
 An attribution is only as trustworthy as where it came from. If a caller can choose their own `user_id`, they can also choose whose budget they spend, or make up a new user on every request to get a fresh budget each time.
 
-- **Options and `ContextWithUser`:** you set these in code, so they're as trustworthy as the value you pass in.
-- **Middleware defaults:** the JWT `sub` claim is read *without verifying the signature*, and `project_id` comes from a plain request header. These are only safe behind an auth layer that rejects bad tokens before the LLM call runs.
-- **Middleware with `WithUserFromContext` / `WithProjectFromContext`:** identity comes from your auth middleware after it verifies the caller. Use this whenever you enforce budgets.
+So Otellix tracks whether each ID was verified, and **budgets only apply limits to verified IDs**. If a limit would depend on an unverified one, the call is refused with `otellix.UnverifiedIdentityError`.
 
-[Middleware & Identity](middleware.md#use-verified-identity-when-you-enforce-budgets) shows the setup for each framework.
+- **Options and `ContextWithUser` / `ContextWithProject`:** verified. You set these in code, so they're as trustworthy as the value you pass in.
+- **Middleware with `WithUserFromContext` / `WithProjectFromContext`:** verified. Identity comes from your auth middleware after it checks the caller.
+- **Middleware with `WithVerifiedJWT`:** verified. Otellix checks the token's signature and expiry.
+- **Middleware defaults:** unverified. The JWT `sub` claim is read *without checking the signature*. The project isn't read at all, unless you opt in to a header with `WithProjectHeader`, which is unverified too.
+- **`ContextWithUnverifiedUser` / `ContextWithUnverifiedProject`:** unverified, for your own middleware to attribute calls from IDs callers control.
+
+Unverified IDs still attribute calls on spans and in metrics. Spans carry `llm.user_verified` and `llm.project_verified`.
+
+[Verified Identity & Budgets](verified-identity.md) has the full rules and setup.
 
 ---
 
@@ -253,3 +262,6 @@ They're unattributed, so they share that budget. Give them a service identity wi
 
 **I set both an option and the context. Which wins?**
 The option. See [Precedence](#precedence).
+
+**Budgeted calls fail with `UnverifiedIdentityError`.**
+The call's user or project came from an unverified source. See [Verified Identity & Budgets](verified-identity.md#troubleshooting).

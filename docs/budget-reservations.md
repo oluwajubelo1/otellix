@@ -111,11 +111,20 @@ The cost: while a call runs, it holds its worst case. A user with $0.95 of a $1.
 
 ## Streams
 
-`TraceStream` reserves the estimate before the stream starts, like `Trace`. While tokens arrive, it also checks the cost so far against the budget. If the stream runs past the budget, `Recv()` returns a `BudgetExceededError` and the stream is closed. On `Close()`, the actual cost is recorded and the hold dropped.
+`TraceStream` reserves the estimate before the stream starts, like `Trace`. A stream can run past its estimate, for example a long answer with no `MaxTokens`, so its hold **grows** as it streams:
 
-The mid-stream check doesn't read the budget store on every token. It reads spend on the first token, then works out locally how much more the stream can spend. It reads the store again only when the stream's cost would use up that headroom, or once a second to notice spend by other calls. With Redis, a stream makes a few round trips instead of two per token. The cutoff is still exact for a single stream; spend by other calls is noticed within about a second.
+1. While the stream's cost so far is within what it holds, nothing happens: no store calls.
+2. When it runs past what it holds, it reserves more, with the same atomic step as a new call: as much again as it already holds, so a long stream makes only a few store calls (holding 1, 2, 4, 8, ... times its estimate).
+3. If that doesn't fit, it tries to reserve just the cost so far.
+4. If even that doesn't fit, the budget has run out: `Recv()` returns a `BudgetExceededError` and the stream is closed (with `FallbackBlock`).
 
-Always `Close()` a stream, usually with `defer stream.Close()`. A stream that is never closed keeps its hold until it falls out of the budget window.
+Every cost a stream incurs is held before it goes on, so streams running at the same time can't together overshoot a limit. Each can go over by at most the one event that crossed it.
+
+> **Fixed in v1.8.0:** a stream used to hold only its estimate, and what it spent beyond that was invisible to other calls until it finished. In a test, 5 streams running at once against a $0.05 limit spent $0.25.
+
+When the stream ends, at `io.EOF`, on an error, or on `Close()`, the actual cost is recorded and the holds are dropped. You don't need to call `Close()` after reading to the end, but do call it, usually with `defer stream.Close()`, if you stop reading early. A stream that's abandoned part way keeps its holds until they fall out of the budget window.
+
+> **Fixed in v1.8.0:** a stream was only charged when `Close()` was called, so code that read to `io.EOF` and stopped wasn't charged at all.
 
 ## Request deduplication
 

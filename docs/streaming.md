@@ -45,9 +45,9 @@ A unique feature of Otellix is the ability to **abort a stream mid-flight** if a
 ### How it works:
 1.  **Before start**: Otellix estimates the stream's cost from the prompt and expected output, and reserves it against the budget. If there isn't room for the estimate, the stream never starts. See [Budget Reservations & Cost Estimates](budget-reservations.md).
 2.  **During start**: Otellix starts the LLM stream.
-3.  **During Recv**: On every `Recv()` call, Otellix calculates the cumulative cost based on the tokens received so far, including prompt-cache reads and writes. It compares that with the headroom it last read from the budget store, and re-reads the store only when the headroom would run out or once a second, not on every token.
+3.  **During Recv**: On every `Recv()` call, Otellix calculates the cumulative cost based on the tokens received so far, including prompt-cache reads and writes. When the cost runs past what the stream holds, it reserves more against the budget, so streams running at once can't overshoot together. See [Budget Reservations](budget-reservations.md#streams).
 4.  **If budget is hit**: Otellix closes the underlying provider stream and returns a `BudgetExceededError`.
-5.  **On `Close()`**: the actual cost is recorded and the reservation released. Always close streams, usually with `defer stream.Close()`.
+5.  **When the stream ends**, at `io.EOF`, on an error, or on `Close()`: the actual cost is recorded and the reservations released. A stream that fails part way is charged for what it streamed, and its span is marked as an error. Call `defer stream.Close()` too, in case you stop reading early.
 
 ### Why this matters:
 Traditional SDKs only track costs *after* the stream finishes. A single malicious or long-running prompt can cost significantly more than the user’s daily limit before you have a chance to stop it. Otellix stops the leak **before it happens**.

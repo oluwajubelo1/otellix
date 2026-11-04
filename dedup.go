@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -32,7 +31,28 @@ type CacheConfig struct {
 
 	// Store is the backend for caching results. If nil, defaults to in-memory.
 	Store CacheStore
+
+	// Scope decides who can be served a cached result. Default:
+	// CacheScopeUser, so results are never shared between users.
+	Scope CacheScope
 }
+
+// CacheScope decides who can be served a cached result.
+type CacheScope int
+
+const (
+	// CacheScopeUser shares results only between requests from the same
+	// user in the same project. Calls with no user ID share results with
+	// each other.
+	CacheScopeUser CacheScope = iota
+
+	// CacheScopeProject shares results between all users in the same project.
+	CacheScopeProject
+
+	// CacheScopeGlobal shares results between everyone, as versions before
+	// v1.8.0 did. Use it only for answers that aren't personal or tenant-specific.
+	CacheScopeGlobal
+)
 
 // defaultCacheStoreMu guards the lazy creation of a config's default store,
 // so concurrent first calls on the same config share one store.
@@ -131,24 +151,52 @@ func (s *InMemoryCacheStore) Set(ctx context.Context, key string, result provide
 	}
 }
 
-// makeCacheKey generates a deterministic cache key from the request parameters.
-// The key is a hash of provider, model, system prompt, messages, and max tokens.
-// Temperature is NOT included in the key (callers with different temperatures may get identical cached results).
-func makeCacheKey(provider, model string, params providers.CallParams) string {
-	h := sha256.New()
-	h.Write([]byte(provider))
-	h.Write([]byte("|"))
-	h.Write([]byte(model))
-	h.Write([]byte("|"))
-	h.Write([]byte(params.SystemPrompt))
-	h.Write([]byte("|"))
+// makeCacheKey generates a deterministic cache key from everything that
+// shapes the response: provider, model and every CallParams field, plus the
+// user and project the cache's Scope keeps results within.
+func makeCacheKey(cfg *Config, params providers.CallParams) string {
+	key := struct {
+		Provider     string
+		Model        string
+		SystemPrompt string
+		Messages     []providers.Message
+		MaxTokens    int
+		Temperature  *float64
+		Extra        string
+		UserID       string
+		ProjectID    string
+	}{
+		Provider:     cfg.Provider,
+		Model:        cfg.Model,
+		SystemPrompt: params.SystemPrompt,
+		Messages:     params.Messages,
+		MaxTokens:    params.MaxTokens,
+		Temperature:  params.Temperature,
+		Extra:        extraKey(params.Extra),
+	}
+	switch cfg.CacheConfig.Scope {
+	case CacheScopeUser:
+		key.UserID, key.ProjectID = cfg.UserID, cfg.ProjectID
+	case CacheScopeProject:
+		key.ProjectID = cfg.ProjectID
+	}
 
-	// Serialize messages to JSON for deterministic hashing.
-	msgBytes, _ := json.Marshal(params.Messages)
-	h.Write(msgBytes)
-	h.Write([]byte("|"))
-	h.Write([]byte(strconv.Itoa(params.MaxTokens)))
+	// Encoding the fields as JSON keeps them apart, so no prompt can produce
+	// the key of a different request. The hash keeps prompts out of the key.
+	data, _ := json.Marshal(key)
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum[:16])
+}
 
-	// Return first 16 bytes as hex (32 hex characters).
-	return fmt.Sprintf("%x", h.Sum(nil)[:16])
+// extraKey encodes provider-specific parameters, such as tools or a
+// response format, for the cache key. Map keys are sorted either way, so
+// the encoding is deterministic.
+func extraKey(extra map[string]interface{}) string {
+	if len(extra) == 0 {
+		return ""
+	}
+	if data, err := json.Marshal(extra); err == nil {
+		return string(data)
+	}
+	return fmt.Sprintf("%v", extra)
 }

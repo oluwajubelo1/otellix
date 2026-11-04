@@ -57,17 +57,26 @@ var chatCompletionsAPI = sdkmw.API{
 		return params, req.Stream, nil
 	},
 
-	ParseResponse: func(body []byte) (providers.CallResult, error) {
+	ParseResponse: func(body []byte) (providers.CallResult, string, bool) {
 		var resp struct {
-			Model string     `json:"model"`
-			Usage *chatUsage `json:"usage"`
+			Model   string     `json:"model"`
+			Usage   *chatUsage `json:"usage"`
+			Choices []struct {
+				Message struct {
+					Content json.RawMessage `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
 		}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return providers.CallResult{}, err
+		if json.Unmarshal(body, &resp) != nil {
+			return providers.CallResult{}, "", false
+		}
+		texts := make([]string, len(resp.Choices))
+		for i, c := range resp.Choices {
+			texts[i] = sdkmw.Text(c.Message.Content)
 		}
 		result := resp.Usage.result()
 		result.Model = resp.Model
-		return result, nil
+		return result, strings.Join(texts, "\n"), resp.Usage != nil
 	},
 
 	ParseEvent: func(_ string, data []byte) (providers.StreamEvent, bool) {
@@ -141,17 +150,18 @@ var responsesAPI = sdkmw.API{
 		}, req.Stream, nil
 	},
 
-	ParseResponse: func(body []byte) (providers.CallResult, error) {
+	ParseResponse: func(body []byte) (providers.CallResult, string, bool) {
 		var resp struct {
-			Model string          `json:"model"`
-			Usage *responsesUsage `json:"usage"`
+			Model  string          `json:"model"`
+			Usage  *responsesUsage `json:"usage"`
+			Output json.RawMessage `json:"output"`
 		}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return providers.CallResult{}, err
+		if json.Unmarshal(body, &resp) != nil {
+			return providers.CallResult{}, "", false
 		}
 		result := resp.Usage.result()
 		result.Model = resp.Model
-		return result, nil
+		return result, sdkmw.Text(resp.Output), resp.Usage != nil
 	},
 
 	ParseEvent: func(_ string, data []byte) (providers.StreamEvent, bool) {

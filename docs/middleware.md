@@ -2,7 +2,7 @@
 
 Tracking costs is only useful if you know **who** is spending the money. Otellix provides HTTP middleware for **Gin**, **Echo** and **Fiber** that reads the user and project from each incoming request and puts them on the request context. Every `otellix.Trace()` and `otellix.TraceStream()` call made while handling that request is then attributed automatically. You don't have to pass IDs through your code.
 
-> This guide covers the HTTP side. For how attribution works in general (precedence, metrics, finding calls with no user, `UnattributedLimit`), see [Cost Attribution](attribution.md).
+> This guide covers the HTTP side. For how attribution works in general (precedence, metrics, finding calls with no user, `UnattributedLimit`), see [Cost Attribution](attribution.md). **If you enforce budgets, also read [Verified Identity & Budgets](verified-identity.md):** budgets only apply limits to IDs the middleware has verified.
 
 ---
 
@@ -12,7 +12,7 @@ For every request, the middleware:
 
 1. Starts an `http.request` server span.
 2. Works out the `user_id` and `project_id` (see [Where identity comes from](#where-identity-comes-from)).
-3. Stores them on the request context with `otellix.ContextWithUser` / `otellix.ContextWithProject`, and records them on the span.
+3. Stores them on the request context, marked as verified or unverified (see [Verified Identity & Budgets](verified-identity.md)), and records them on the span.
 4. Runs your handler.
 5. Records the HTTP method, route and status code on the span.
 
@@ -25,14 +25,16 @@ request ─▶ [your auth middleware] ─▶ [otellix middleware] ─▶ handler
 
 By default:
 
-| Identifier | Source | Example |
+| Identifier | Source | Verified? |
 | --- | --- | --- |
-| `user_id` | The `sub` claim of the JWT in `Authorization: Bearer <token>` | `{"sub": "user_123"}` gives `user_123` |
-| `project_id` | The `X-Project-ID` request header | `X-Project-ID: acme` gives `acme` |
+| `user_id` | The `sub` claim of the JWT in `Authorization: Bearer <token>`, read **without** checking its signature | No |
+| `project_id` | Not read | n/a |
 
-If the header or claim is missing, that identifier is left empty and the call is [unattributed](attribution.md#calls-with-no-user).
+If the claim is missing, the user is left empty and the call is [unattributed](attribution.md#calls-with-no-user).
 
-> **The default does not verify the JWT.** It decodes the token and reads the claim, but never checks the signature. Anyone can make a token with any `sub`. That's fine for observability behind an auth layer that rejects bad tokens. **If you enforce budgets, read [Use verified identity](#use-verified-identity-when-you-enforce-budgets).**
+> **The default doesn't verify the JWT.** It decodes the token and reads the claim, but never checks the signature, so anyone can make a token with any `sub`. That's fine for tracing, so calls are still attributed. But **budgets won't apply a per-user limit to an unverified user**: a budgeted call returns `otellix.UnverifiedIdentityError` instead. To enforce budgets, verify the user with [`WithUserFromContext` or `WithVerifiedJWT`](#use-verified-identity-when-you-enforce-budgets).
+
+> **Changed in v1.8.0:** the `X-Project-ID` header is no longer read by default, because callers can set it to any project. Read the project from your auth middleware with `WithProjectFromContext`, or opt back in to the header, unverified, with `WithProjectHeader("X-Project-ID")`.
 
 ---
 
@@ -92,20 +94,19 @@ func main() {
 Try it:
 
 ```bash
-# A test token with sub=user_123 (unsigned, fine for local testing)
+# A test token with sub=user_123 (not signed with a real key, fine for local testing)
 TOKEN="eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyXzEyMyJ9.x"
 
 curl -X POST localhost:8080/generate \
   -H "Authorization: Bearer $TOKEN" \
-  -H "X-Project-ID: acme" \
   -d "prompt=Say hello"
 ```
 
-The console summary for the call shows `user: user_123`.
+The console summary for the call shows `user: user_123`. This setup attributes calls for tracing. To enforce budgets, verify the identity as below.
 
 ### Use verified identity
 
-Register your auth middleware first. Have it call `c.Set` with the verified user ID, then point Otellix at that key:
+**From your auth middleware.** Register your auth middleware first. Have it call `c.Set` with the verified user ID, then point Otellix at that key:
 
 ```go
 r := gin.Default()
@@ -126,6 +127,19 @@ r.Use(otellixmw.GinMiddleware(
     otellixmw.WithProjectFromContext("project_id"),
 ))
 ```
+
+**Or have Otellix verify the JWT.** Give it the key your tokens are signed with:
+
+```go
+import jwt "github.com/golang-jwt/jwt/v5"
+
+r.Use(otellixmw.GinMiddleware(otellixmw.WithVerifiedJWT(
+    func(*jwt.Token) (any, error) { return []byte(os.Getenv("JWT_SECRET")), nil },
+    jwt.WithValidMethods([]string{"HS256"}),
+)))
+```
+
+For tokens from an identity provider with a JWKS URL, see [Verified Identity & Budgets](verified-identity.md#option-b-have-otellix-verify-the-jwt).
 
 ---
 
@@ -192,7 +206,7 @@ e.Use(otellixmw.EchoMiddleware(
 ))
 ```
 
-If you use Echo's JWT middleware (`echojwt`), it stores the parsed token rather than a string, so add a small middleware after it that copies the subject out with `c.Set("user_id", subject)`.
+If you use Echo's JWT middleware (`echojwt`), it stores the parsed token rather than a string, so add a small middleware after it that copies the subject out with `c.Set("user_id", subject)`. Or use `otellixmw.WithVerifiedJWT(...)`, exactly as for Gin.
 
 ---
 
@@ -209,6 +223,8 @@ go get github.com/oluwajubelo1/otellix/middleware/fiber
 ```
 
 It needs **Go 1.25 or newer**, the same as Fiber v3 itself. The main Otellix module still supports Go 1.23.
+
+> **Use `middleware/fiber` v0.2.0 or later with Otellix v1.8.0 or later.** Earlier Fiber versions can't tell Otellix that an ID came from your auth middleware, so budgets treat every ID from them as unverified and refuse budgeted calls. `WithVerifiedJWT` is also new in v0.2.0.
 
 ### Basic setup
 
@@ -272,6 +288,8 @@ app.Use(otellixfiber.Middleware(
 ))
 ```
 
+Or verify the JWT with `otellixfiber.WithVerifiedJWT(keyFunc, opts...)`, as for Gin.
+
 ### Fiber-specific behaviour
 
 - `http.route` is the matched route pattern (e.g. `/users/:id`), recorded after your handler runs. That's the point at which Fiber knows the final route.
@@ -286,18 +304,20 @@ All three frameworks take the same options. Gin and Echo use `otellixmw.With...`
 | Option | Default | What it does |
 | --- | --- | --- |
 | `WithJWTClaim(name)` | `"sub"` | Which JWT claim holds the user ID. The claim must be a string. |
-| `WithProjectHeader(name)` | `"X-Project-ID"` | Which request header holds the project ID. |
-| `WithUserFromContext(key)` | not set | Read the user ID from the framework's request store instead of the JWT. Gin: `c.Get(key)`. Echo: `c.Get(key)`. Fiber: `c.Locals(key)`. When set, the `Authorization` header is ignored. |
-| `WithProjectFromContext(key)` | not set | Read the project ID from the framework's request store instead of the header. When set, the project header is ignored. |
+| `WithVerifiedJWT(keyFunc, opts...)` | not set | Verify the JWT's signature with `keyFunc`, and its expiry, before reading the claim. The user ID is then **verified**. A token that fails verification gives no user. `opts` are `jwt.ParserOption`s, such as `jwt.WithValidMethods`. |
+| `WithUserFromContext(key)` | not set | Read the user ID from the framework's request store instead of the JWT. Gin: `c.Get(key)`. Echo: `c.Get(key)`. Fiber: `c.Locals(key)`. When set, the `Authorization` header is ignored. The user ID is **verified**. |
+| `WithProjectFromContext(key)` | not set | Read the project ID from the framework's request store. When set, any project header is ignored. The project ID is **verified**. |
+| `WithProjectHeader(name)` | not set | Read the project ID from a request header. Callers can set headers to anything, so the project ID is **unverified**: attributed, but never limited. |
 
 Values read with the context options must be **strings**. Anything else (a number, a struct, a pointer) is treated as missing.
 
-Example: a JWT that keeps the user in `user_id`, and a tenant header called `X-Tenant-ID`:
+Example: a verified JWT that keeps the user in `user_id`, and the tenant from your auth middleware:
 
 ```go
 r.Use(otellixmw.GinMiddleware(
+    otellixmw.WithVerifiedJWT(keyFunc, jwt.WithValidMethods([]string{"RS256"})),
     otellixmw.WithJWTClaim("user_id"),
-    otellixmw.WithProjectHeader("X-Tenant-ID"),
+    otellixmw.WithProjectFromContext("tenant_id"),
 ))
 ```
 
@@ -305,22 +325,21 @@ r.Use(otellixmw.GinMiddleware(
 
 ## Use verified identity when you enforce budgets
 
-The default extraction trusts whatever the caller sends:
+Budgets only apply limits to verified IDs. Anything a caller sends can be forged:
 
-- **The JWT is not verified.** A caller can make a token with any `sub`, including a new one on every request, and get a fresh per-user budget each time.
-- **The project comes from a header.** A caller can set `X-Project-ID` to someone else's project and spend that project's budget.
+- **An unverified JWT.** A caller can make a token with any `sub`, including a new one on every request, to get a fresh per-user budget each time.
+- **A header.** A caller can set a project header to someone else's project and spend that project's budget.
 
-This is only a problem on routes where your own auth doesn't reject bad tokens before the LLM call runs. But it's easy to get wrong, for example a public route, a route registered before auth, or an auth layer that only checks some paths.
+So if a budget limit would depend on an ID read from either, Otellix refuses the call with `otellix.UnverifiedIdentityError` instead of enforcing a limit that could be dodged. The provider isn't called.
 
-The fix is the same in every framework:
+To enforce budgets, use one of:
 
-1. Verify the caller in your auth middleware.
-2. Store the verified IDs in the framework's request store as strings.
-3. Register the Otellix middleware **after** your auth middleware, with `WithUserFromContext` and `WithProjectFromContext`.
+1. **`WithUserFromContext` / `WithProjectFromContext`:** verify the caller in your auth middleware, store the IDs in the framework's request store as strings, and register the Otellix middleware **after** it. If the Otellix middleware runs first, the auth middleware hasn't stored anything yet, and every call is unattributed.
+2. **`WithVerifiedJWT`:** Otellix checks the token's signature and expiry itself.
 
-Order matters. If the Otellix middleware runs first, the auth middleware hasn't stored anything yet, and every call is unattributed.
+With either, a forged token or header has no effect on attribution or budgets.
 
-With these options set, a forged token or header has no effect on attribution or budgets. Both the user ID and the project ID come only from what your auth middleware verified.
+[Verified Identity & Budgets](verified-identity.md) has the full rules, JWKS setup, and an upgrade checklist.
 
 ---
 
@@ -329,7 +348,9 @@ With these options set, a forged token or header has no effect on attribution or
 | Attribute | When |
 | --- | --- |
 | `llm.user_id` | A user ID was found |
+| `llm.user_verified` | A user ID was found: `true` if it was verified |
 | `llm.project_id` | A project ID was found |
+| `llm.project_verified` | A project ID was found: `true` if it was verified |
 | `llm.user_attributed` | Always: `true` or `false` |
 | `http.method` | Always |
 | `http.route` | Always: the route pattern, e.g. `/users/:id` |
@@ -350,7 +371,14 @@ Requests with no user ID aren't covered by `PerUserLimit`. To find them, filter 
 **Calls show an empty `user_id`.**
 - Check that you pass the request's context: `c.Request.Context()` (Gin), `c.Request().Context()` (Echo), `c.Context()` (Fiber).
 - With the default settings: check the header is exactly `Authorization: Bearer <token>`, and that the claim (default `sub`) exists and is a string.
+- With `WithVerifiedJWT`: a token that fails verification gives no user. Check the key, the signing algorithm, and that the token hasn't expired.
 - With `WithUserFromContext`: check the Otellix middleware is registered *after* your auth middleware, and that the stored value is a `string`.
+
+**Budgeted calls fail with `UnverifiedIdentityError`.**
+The middleware read the user or project from an unverified source. Use `WithUserFromContext` or `WithVerifiedJWT` for users, and `WithProjectFromContext` for projects. See [Verified Identity & Budgets](verified-identity.md#troubleshooting).
+
+**Calls lost their project after upgrading.**
+From v1.8.0, `X-Project-ID` is no longer read by default. Use `WithProjectFromContext`, or `WithProjectHeader("X-Project-ID")` for attribution without budgets.
 
 **Fiber calls are never attributed.**
 You're probably passing `c` instead of `c.Context()` to `otellix.Trace`.

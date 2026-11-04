@@ -105,6 +105,9 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	var reservation *Reservation
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)
+		if err := cfg.unverifiedIdentityError(); err != nil {
+			return providers.CallResult{}, err
+		}
 		if err := cfg.unpricedError(); err != nil {
 			return providers.CallResult{}, err
 		}
@@ -142,7 +145,7 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	// Hook 1: Dedup — return a cached result if there is one, and collapse
 	// identical requests already in flight into a single provider call.
 	if cfg.CacheConfig != nil {
-		cacheKey := makeCacheKey(cfg.Provider, cfg.Model, params)
+		cacheKey := makeCacheKey(cfg, params)
 		if cached, ok := cfg.CacheConfig.store().Get(ctx, cacheKey); ok {
 			return cached, nil
 		}
@@ -202,6 +205,7 @@ func traceCall(ctx context.Context, provider providers.Provider, params provider
 		attribute.String("llm.project_id", cfg.ProjectID),
 		attribute.Bool("llm.user_attributed", cfg.UserID != ""),
 	)
+	cfg.setIdentityAttributes(span)
 
 	for k, v := range cfg.Attributes {
 		span.SetAttributes(attribute.String(k, v))

@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/oluwajubelo1/otellix"
 	"github.com/oluwajubelo1/otellix/providers"
@@ -252,14 +253,15 @@ func TestGetForecastProjectionConsistency(t *testing.T) {
 
 	report := otellix.GetForecast("")
 
-	// ProjectedMonthSpend should equal DailyBurnRate * daysInMonth
-	// with small tolerance for floating point
-	const daysInMay = 31
-	expectedProjected := report.DailyBurnRate * float64(daysInMay)
+	// ProjectedMonthSpend should equal DailyBurnRate * the days in the
+	// current month, with small tolerance for floating point.
+	now := time.Now()
+	daysInMonth := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	expectedProjected := report.DailyBurnRate * float64(daysInMonth)
 	diff := report.ProjectedMonthSpend - expectedProjected
 	if diff > 1e-6 || diff < -1e-6 {
 		t.Errorf("projection inconsistent: %f != %f (burn %f * %d days)",
-			report.ProjectedMonthSpend, expectedProjected, report.DailyBurnRate, daysInMay)
+			report.ProjectedMonthSpend, expectedProjected, report.DailyBurnRate, daysInMonth)
 	}
 }
 

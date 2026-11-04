@@ -283,3 +283,71 @@ type testError string
 func (e testError) Error() string {
 	return string(e)
 }
+
+// TestDedupCacheScope checks who is served a cached result under each
+// CacheScope: by default only the same user in the same project.
+func TestDedupCacheScope(t *testing.T) {
+	params := providers.CallParams{
+		Model:    "claude-sonnet-4-6",
+		Messages: []providers.Message{{Role: "user", Content: "what are your opening hours?"}},
+	}
+	type caller struct{ user, project string }
+
+	for _, tc := range []struct {
+		name    string
+		scope   otellix.CacheScope
+		callers []caller
+		calls   int // provider calls expected
+	}{
+		{"user scope, same user", otellix.CacheScopeUser, []caller{{"ada", "acme"}, {"ada", "acme"}}, 1},
+		{"user scope, different users", otellix.CacheScopeUser, []caller{{"ada", "acme"}, {"bob", "acme"}}, 2},
+		{"user scope, same user in different projects", otellix.CacheScopeUser, []caller{{"ada", "acme"}, {"ada", "globex"}}, 2},
+		{"project scope, same project", otellix.CacheScopeProject, []caller{{"ada", "acme"}, {"bob", "acme"}}, 1},
+		{"project scope, different projects", otellix.CacheScopeProject, []caller{{"ada", "acme"}, {"bob", "globex"}}, 2},
+		{"global scope", otellix.CacheScopeGlobal, []caller{{"ada", "acme"}, {"bob", "globex"}}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &otellix.CacheConfig{TTL: 5 * time.Minute, Scope: tc.scope}
+			mock := &providers.MockProvider{Result: providers.CallResult{InputTokens: 10, OutputTokens: 5}}
+			for _, c := range tc.callers {
+				if _, err := otellix.Trace(context.Background(), mock, params,
+					otellix.WithProvider("anthropic"),
+					otellix.WithUserID(c.user),
+					otellix.WithProjectID(c.project),
+					otellix.WithRequestCache(cfg),
+				); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mock.CallCount != tc.calls {
+				t.Errorf("expected %d provider calls, got %d", tc.calls, mock.CallCount)
+			}
+		})
+	}
+}
+
+// TestDedupCacheKeyIncludesEveryParam checks that requests differing only
+// in temperature or provider-specific parameters, such as tools, aren't
+// served each other's results.
+func TestDedupCacheKeyIncludesEveryParam(t *testing.T) {
+	base := providers.CallParams{
+		Model:    "claude-sonnet-4-6",
+		Messages: []providers.Message{{Role: "user", Content: "hello"}},
+	}
+	hot := base
+	hot.Temperature = func(f float64) *float64 { return &f }(0.9)
+	withTools := base
+	withTools.Extra = map[string]interface{}{"tools": []string{"get_weather"}}
+
+	cfg := &otellix.CacheConfig{TTL: 5 * time.Minute}
+	mock := &providers.MockProvider{Result: providers.CallResult{InputTokens: 10, OutputTokens: 5}}
+	for _, params := range []providers.CallParams{base, hot, withTools} {
+		if _, err := otellix.Trace(context.Background(), mock, params,
+			otellix.WithProvider("anthropic"), otellix.WithRequestCache(cfg)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mock.CallCount != 3 {
+		t.Errorf("expected 3 provider calls for 3 different requests, got %d", mock.CallCount)
+	}
+}

@@ -3,27 +3,30 @@
 // gin.go extracts user_id and project_id from requests and injects them into the
 // context so downstream otellix.Trace() calls pick them up automatically.
 //
-// Usage:
+// Budgets only apply limits to verified identity. With no options, the user
+// comes from the JWT's "sub" claim without checking its signature, so calls
+// are attributed in traces and metrics, but a budget limit on that user
+// returns otellix.UnverifiedIdentityError. Verify it one of two ways.
 //
-//	r := gin.Default()
-//	r.Use(otellixmw.GinMiddleware())
-//
-// With custom config:
-//
-//	r.Use(otellixmw.GinMiddleware(
-//	    otellixmw.WithJWTClaim("user_id"),
-//	    otellixmw.WithProjectHeader("X-Tenant-ID"),
-//	))
-//
-// Reading identity your auth middleware has already verified (recommended
-// whenever budgets are enforced):
+// Read identity your auth middleware has already verified:
 //
 //	r.Use(authMiddleware) // sets c.Set("user_id", ...) after verifying the token
 //	r.Use(otellixmw.GinMiddleware(otellixmw.WithUserFromContext("user_id")))
+//
+// Or have the middleware verify the JWT itself:
+//
+//	r.Use(otellixmw.GinMiddleware(otellixmw.WithVerifiedJWT(
+//	    func(*jwt.Token) (any, error) { return secret, nil },
+//	    jwt.WithValidMethods([]string{"HS256"}),
+//	)))
+//
+// The project is only read from verified identity, WithProjectFromContext,
+// unless you opt in to a header with WithProjectHeader.
 package middleware
 
 import (
 	"github.com/gin-gonic/gin"
+	jwt "github.com/golang-jwt/jwt/v5"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -37,12 +40,28 @@ type MiddlewareConfig = identity.Config
 // MiddlewareOption is a functional option for middleware configuration.
 type MiddlewareOption func(*MiddlewareConfig)
 
-// WithJWTClaim sets the JWT claim name for user_id extraction.
+// WithJWTClaim sets the JWT claim name for user_id extraction. Default: "sub".
 func WithJWTClaim(claim string) MiddlewareOption {
 	return func(c *MiddlewareConfig) { c.JWTClaim = claim }
 }
 
-// WithProjectHeader sets the HTTP header name for project_id extraction.
+// WithVerifiedJWT verifies the JWT in the Authorization header before
+// reading user_id from it: its signature with keyFunc, and its expiry. A
+// token that fails verification gives no user_id. The user_id is then
+// verified, so budgets apply per-user limits to it. Pass parser options
+// such as jwt.WithValidMethods to pin the signing algorithm.
+func WithVerifiedJWT(keyFunc jwt.Keyfunc, opts ...jwt.ParserOption) MiddlewareOption {
+	return func(c *MiddlewareConfig) {
+		c.JWTKeyFunc = keyFunc
+		c.JWTParserOptions = opts
+	}
+}
+
+// WithProjectHeader reads project_id from the given HTTP header. Default:
+// no header is read. Callers can set a header to anything, so the
+// project_id is unverified: calls are attributed to it, but budgets won't
+// apply a per-project limit to it. Use WithProjectFromContext for a project
+// your auth middleware has verified.
 func WithProjectHeader(header string) MiddlewareOption {
 	return func(c *MiddlewareConfig) { c.ProjectHeader = header }
 }
@@ -50,18 +69,16 @@ func WithProjectHeader(header string) MiddlewareOption {
 // WithUserFromContext reads user_id from the framework context value under key
 // (gin.Context.Get / echo.Context.Get) instead of parsing the JWT. Use it
 // with an auth middleware that verifies the caller and stores their ID, and
-// register this middleware after it. The value must be a string.
-//
-// The default JWT extraction does not verify signatures, so on routes without
-// verified auth a caller can choose any user_id, including a new one per
-// request to sidestep per-user budgets.
+// register this middleware after it. The value must be a string. The
+// user_id is treated as verified, so budgets apply per-user limits to it.
 func WithUserFromContext(key string) MiddlewareOption {
 	return func(c *MiddlewareConfig) { c.UserContextKey = key }
 }
 
 // WithProjectFromContext reads project_id from the framework context value
-// under key instead of the project header, so callers cannot choose which
-// project's budget they spend. The value must be a string.
+// under key, so callers cannot choose which project's budget they spend.
+// The value must be a string. The project_id is treated as verified, so
+// budgets apply per-project limits to it.
 func WithProjectFromContext(key string) MiddlewareOption {
 	return func(c *MiddlewareConfig) { c.ProjectContextKey = key }
 }
@@ -85,7 +102,7 @@ func GinMiddleware(opts ...MiddlewareOption) gin.HandlerFunc {
 			v, _ := c.Get(key)
 			return v
 		}, c.GetHeader)
-		ctx = identity.Apply(ctx, span, userID, projectID)
+		ctx = cfg.Attribute(ctx, span, userID, projectID)
 
 		// Set request attributes.
 		span.SetAttributes(

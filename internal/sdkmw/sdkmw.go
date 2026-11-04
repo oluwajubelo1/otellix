@@ -20,6 +20,9 @@ import (
 	"io"
 	"net/http"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/oluwajubelo1/otellix"
 	"github.com/oluwajubelo1/otellix/providers"
 )
@@ -39,8 +42,10 @@ type API struct {
 	// ParseRequest reads the call's parameters from the request body.
 	ParseRequest func(body []byte) (params providers.CallParams, stream bool, err error)
 
-	// ParseResponse reads token usage from a non-streaming response body.
-	ParseResponse func(body []byte) (providers.CallResult, error)
+	// ParseResponse reads a non-streaming response body: its token usage,
+	// whether it reported any (ok), and its output text, which is used to
+	// estimate output when it didn't.
+	ParseResponse func(body []byte) (result providers.CallResult, text string, ok bool)
 
 	// ParseEvent reads one server-sent event of a streaming response. ok is
 	// false for events with nothing to record. Token and usage fields are
@@ -139,17 +144,40 @@ func (c *call) Call(ctx context.Context, params providers.CallParams) (providers
 		return providers.CallResult{}, err
 	}
 
-	// A body without usage is recorded as zero tokens rather than failing
-	// a call that succeeded.
-	result, _ := c.api.ParseResponse(data)
+	result, text, ok := c.api.ParseResponse(data)
+	if !ok {
+		// Some OpenAI-compatible servers and proxies leave usage out.
+		// Charge an estimate rather than nothing, and flag it.
+		result.InputTokens = inputEstimate(params)
+		result.OutputTokens = outputEstimate(len(text))
+		trace.SpanFromContext(ctx).SetAttributes(attribute.Bool("llm.usage_estimated", true))
+	}
 	return result, nil
+}
+
+// inputEstimate estimates a request's input tokens from its prompt.
+func inputEstimate(params providers.CallParams) int64 {
+	contents := make([]string, len(params.Messages))
+	for i, m := range params.Messages {
+		contents[i] = m.Content
+	}
+	return otellix.EstimateTokens(params.SystemPrompt) + otellix.EstimateTokensFromMessages(contents)
+}
+
+// outputEstimate estimates the output tokens in chars characters of text,
+// at about 4 characters per token, as otellix.EstimateTokens does.
+func outputEstimate(chars int) int64 {
+	if chars == 0 {
+		return 0
+	}
+	return max(int64(chars/4), 1)
 }
 
 func (c *call) Stream(ctx context.Context, params providers.CallParams) (providers.Stream, error) {
 	if err := c.send(ctx, params); err != nil {
 		return nil, err
 	}
-	c.events = newEventSource(c.api, params, c.resp.Body)
+	c.events = newEventSource(c.api, params, c.resp.Body, trace.SpanFromContext(ctx))
 	return c.events, nil
 }
 
@@ -274,21 +302,22 @@ type eventSource struct {
 	event string       // the current event's name
 	data  bytes.Buffer // the current event's data
 
-	inputEstimate int64 // input tokens estimated from the request
-	sentInput     bool  // whether an input count has been passed on
-	outputChars   int   // characters of output text so far
+	inputEstimate  int64 // input tokens estimated from the request
+	sentInput      bool  // whether an input count has been passed on
+	outputChars    int   // characters of output text so far
+	inputReported  bool  // whether the provider reported input usage
+	outputReported bool  // whether the provider reported output usage
+
+	span trace.Span // the call's span, flagged if usage was estimated
 }
 
-func newEventSource(api API, params providers.CallParams, body io.ReadCloser) *eventSource {
-	contents := make([]string, len(params.Messages))
-	for i, m := range params.Messages {
-		contents[i] = m.Content
-	}
+func newEventSource(api API, params providers.CallParams, body io.ReadCloser, span trace.Span) *eventSource {
 	return &eventSource{
 		api:           api,
 		body:          body,
 		r:             bufio.NewReader(body),
-		inputEstimate: otellix.EstimateTokens(params.SystemPrompt) + otellix.EstimateTokensFromMessages(contents),
+		inputEstimate: inputEstimate(params),
+		span:          span,
 	}
 }
 
@@ -348,7 +377,7 @@ func (e *eventSource) dispatch() (providers.StreamEvent, bool) {
 	// Estimate input until the provider reports it, so the budget check
 	// sees it from the start. Reported usage replaces the estimate.
 	if evt.InputTokens > 0 || evt.CacheReadTokens > 0 || evt.CacheWriteTokens > 0 {
-		e.sentInput = true
+		e.sentInput, e.inputReported = true, true
 	} else if !e.sentInput {
 		evt.InputTokens = e.inputEstimate
 		e.sentInput = true
@@ -356,8 +385,10 @@ func (e *eventSource) dispatch() (providers.StreamEvent, bool) {
 	// Likewise estimate output from the text so far. Providers that report
 	// output usage do so at the end of the stream, which replaces it.
 	e.outputChars += len(evt.Token)
-	if evt.OutputTokens == 0 && evt.Token != "" {
-		evt.OutputTokens = max(int64(e.outputChars/4), 1) // ~4 characters per token, as EstimateTokens
+	if evt.OutputTokens > 0 {
+		e.outputReported = true
+	} else if evt.Token != "" {
+		evt.OutputTokens = outputEstimate(e.outputChars)
 	}
 	return evt, true
 }
@@ -366,6 +397,9 @@ func (e *eventSource) dispatch() (providers.StreamEvent, bool) {
 // readEvent call, then io.EOF once the body is finished.
 func (e *eventSource) Recv() (providers.StreamEvent, error) {
 	if e.eof {
+		if !e.inputReported || !e.outputReported {
+			e.span.SetAttributes(attribute.Bool("llm.usage_estimated", true))
+		}
 		return providers.StreamEvent{}, io.EOF
 	}
 	return e.next, nil
