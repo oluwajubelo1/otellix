@@ -147,6 +147,7 @@ func TestOpenAIMiddlewareStreamUsage(t *testing.T) {
 		`data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-4o","choices":[],"usage":{"prompt_tokens":30,"completion_tokens":2}}`,
 		`data: [DONE]`,
 	))
+	spans := recordSpans(t)
 	budget, store := newBudget()
 	client := openAIClient(srv, otellix.WithBudgetConfig(budget))
 
@@ -167,6 +168,9 @@ func TestOpenAIMiddlewareStreamUsage(t *testing.T) {
 	}
 	assertSpend(t, store, "user:streamer", otellix.CalculateCost("openai", "gpt-4o",
 		providers.CallResult{InputTokens: 30, OutputTokens: 2}))
+	if got := spanAttr(t, spans, "llm.usage_estimated"); got != "" {
+		t.Errorf("reported usage should not be flagged as estimated, got llm.usage_estimated=%q", got)
+	}
 }
 
 // TestOpenAIMiddlewareStreamWithoutUsage checks that a stream with no usage
@@ -176,6 +180,7 @@ func TestOpenAIMiddlewareStreamWithoutUsage(t *testing.T) {
 		`data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"`+strings.Repeat("a", 400)+`"}}]}`,
 		`data: [DONE]`,
 	))
+	spans := recordSpans(t)
 	budget, store := newBudget()
 	client := openAIClient(srv, otellix.WithBudgetConfig(budget))
 
@@ -190,6 +195,33 @@ func TestOpenAIMiddlewareStreamWithoutUsage(t *testing.T) {
 	// 400 characters is about 100 output tokens; "hi" is about 5 input tokens.
 	assertSpend(t, store, "user:estimated", otellix.CalculateCost("openai", "gpt-4o",
 		providers.CallResult{InputTokens: 5, OutputTokens: 100}))
+	if got := spanAttr(t, spans, "llm.usage_estimated"); got != "true" {
+		t.Errorf("expected llm.usage_estimated=true on the span, got %q", got)
+	}
+}
+
+// TestOpenAIMiddlewareMissingUsageIsEstimated checks that a response with
+// no usage, as some OpenAI-compatible servers send, is charged an estimate
+// rather than nothing.
+func TestOpenAIMiddlewareMissingUsageIsEstimated(t *testing.T) {
+	srv, _ := fakeAPI(t, http.StatusOK, "application/json", `{
+		"id": "c1", "object": "chat.completion", "model": "gpt-4o",
+		"choices": [{"index": 0, "message": {"role": "assistant", "content": "`+strings.Repeat("a", 400)+`"}, "finish_reason": "stop"}]
+	}`)
+	spans := recordSpans(t)
+	budget, store := newBudget()
+	client := openAIClient(srv, otellix.WithBudgetConfig(budget))
+
+	if _, err := client.Chat.Completions.New(otellix.ContextWithUser(context.Background(), "no-usage"), chatParams); err != nil {
+		t.Fatal(err)
+	}
+
+	// 400 characters is about 100 output tokens; "hi" is about 5 input tokens.
+	assertSpend(t, store, "user:no-usage", otellix.CalculateCost("openai", "gpt-4o",
+		providers.CallResult{InputTokens: 5, OutputTokens: 100}))
+	if got := spanAttr(t, spans, "llm.usage_estimated"); got != "true" {
+		t.Errorf("expected llm.usage_estimated=true on the span, got %q", got)
+	}
 }
 
 func TestOpenAIMiddlewareStreamCutoff(t *testing.T) {

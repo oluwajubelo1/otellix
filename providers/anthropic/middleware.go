@@ -53,13 +53,14 @@ var messagesAPI = sdkmw.API{
 		return params, req.Stream, nil
 	},
 
-	ParseResponse: func(body []byte) (providers.CallResult, error) {
+	ParseResponse: func(body []byte) (providers.CallResult, string, bool) {
 		var resp struct {
-			Model string `json:"model"`
-			Usage usage  `json:"usage"`
+			Model   string          `json:"model"`
+			Usage   *usage          `json:"usage"`
+			Content json.RawMessage `json:"content"`
 		}
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return providers.CallResult{}, err
+		if json.Unmarshal(body, &resp) != nil || resp.Usage == nil {
+			return providers.CallResult{Model: resp.Model}, sdkmw.Text(resp.Content), false
 		}
 		return providers.CallResult{
 			InputTokens:      resp.Usage.InputTokens,
@@ -67,7 +68,7 @@ var messagesAPI = sdkmw.API{
 			CacheReadTokens:  resp.Usage.CacheReadInputTokens,
 			CacheWriteTokens: resp.Usage.CacheCreationInputTokens,
 			Model:            resp.Model,
-		}, nil
+		}, sdkmw.Text(resp.Content), true
 	},
 
 	ParseEvent: func(_ string, data []byte) (providers.StreamEvent, bool) {
