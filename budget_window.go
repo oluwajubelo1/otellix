@@ -1,6 +1,9 @@
 package otellix
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type windowKind int
 
@@ -53,6 +56,38 @@ func (w BudgetWindow) location() *time.Location {
 	return w.loc
 }
 
+// Location returns the time zone a calendar window resets in, or nil for a
+// rolling window, which doesn't depend on one.
+func (w BudgetWindow) Location() *time.Location {
+	if w.kind == windowRolling {
+		return nil
+	}
+	return w.location()
+}
+
+// String describes the window, e.g. "rolling 24h0m0s" or "calendar month
+// in Africa/Lagos". For time.Local, which means a different zone on each
+// server, it includes the zone and offset in effect now.
+func (w BudgetWindow) String() string {
+	switch w.kind {
+	case windowCalendarDay:
+		return "calendar day in " + locationName(w.location())
+	case windowCalendarMonth:
+		return "calendar month in " + locationName(w.location())
+	default:
+		return "rolling " + w.rollingInterval().String()
+	}
+}
+
+// locationName names loc. time.Local is named by the zone it stands for
+// on this machine, since "Local" means something different on each server.
+func locationName(loc *time.Location) string {
+	if loc != time.Local {
+		return loc.String()
+	}
+	return fmt.Sprintf("Local (%s)", time.Now().In(loc).Format("MST -07:00"))
+}
+
 // Start returns the earliest time whose spend still counts at now.
 func (w BudgetWindow) Start(now time.Time) time.Time {
 	switch w.kind {
@@ -68,7 +103,9 @@ func (w BudgetWindow) Start(now time.Time) time.Time {
 }
 
 // ResetAt returns when spend recorded at oldest stops counting. Calendar
-// windows ignore oldest and return the start of the next period after now.
+// windows ignore oldest and return the start of the next period after now,
+// in the window's time zone. Rolling windows return a time in UTC, so the
+// result doesn't depend on the server's time zone.
 func (w BudgetWindow) ResetAt(now, oldest time.Time) time.Time {
 	switch w.kind {
 	case windowCalendarDay:
@@ -77,9 +114,9 @@ func (w BudgetWindow) ResetAt(now, oldest time.Time) time.Time {
 		return w.Start(now).AddDate(0, 1, 0)
 	default:
 		if oldest.IsZero() {
-			return now.Add(w.rollingInterval())
+			return now.Add(w.rollingInterval()).UTC()
 		}
-		return oldest.Add(w.rollingInterval())
+		return oldest.Add(w.rollingInterval()).UTC()
 	}
 }
 

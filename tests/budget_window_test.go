@@ -186,3 +186,45 @@ func TestDefaultStoreCreatedOnceUnderConcurrency(t *testing.T) {
 		t.Errorf("expected all %d calls recorded ($0.50), got $%.4f", calls, spend)
 	}
 }
+
+// TestResetAtTimeZone checks that ResetAt doesn't depend on the server's
+// time zone: calendar windows reset in their own zone, rolling ones in UTC.
+func TestResetAtTimeZone(t *testing.T) {
+	lagos, err := time.LoadLocation("Africa/Lagos")
+	if err != nil {
+		t.Skip("no time zone database")
+	}
+	now := time.Now()
+	if loc := otellix.RollingWindow(time.Hour).ResetAt(now, time.Time{}).Location(); loc != time.UTC {
+		t.Errorf("rolling window: expected UTC, got %v", loc)
+	}
+	if loc := otellix.RollingWindow(time.Hour).ResetAt(now, now.Add(-time.Minute)).Location(); loc != time.UTC {
+		t.Errorf("rolling window with spend: expected UTC, got %v", loc)
+	}
+	if loc := otellix.CalendarDay(lagos).ResetAt(now, time.Time{}).Location(); loc != lagos {
+		t.Errorf("calendar day: expected Africa/Lagos, got %v", loc)
+	}
+}
+
+func TestBudgetWindowDescription(t *testing.T) {
+	lagos, err := time.LoadLocation("Africa/Lagos")
+	if err != nil {
+		t.Skip("no time zone database")
+	}
+	for _, tc := range []struct {
+		window otellix.BudgetWindow
+		str    string
+		loc    *time.Location
+	}{
+		{otellix.RollingWindow(24 * time.Hour), "rolling 24h0m0s", nil},
+		{otellix.CalendarDay(nil), "calendar day in UTC", time.UTC},
+		{otellix.CalendarMonth(lagos), "calendar month in Africa/Lagos", lagos},
+	} {
+		if got := tc.window.String(); got != tc.str {
+			t.Errorf("String: got %q, want %q", got, tc.str)
+		}
+		if got := tc.window.Location(); got != tc.loc {
+			t.Errorf("%s: Location got %v, want %v", tc.str, got, tc.loc)
+		}
+	}
+}
