@@ -105,7 +105,7 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	var reservation *Reservation
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)
-		if err := cfg.unverifiedIdentityError(); err != nil {
+		if err := cfg.identityError(); err != nil {
 			return providers.CallResult{}, err
 		}
 		if err := cfg.unpricedError(); err != nil {

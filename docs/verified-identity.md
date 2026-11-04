@@ -49,6 +49,8 @@ A call is refused only when a limit would actually depend on the unverified ID:
 | An unverified user | Only `PerProjectLimit` | Allowed: the user ID doesn't affect any limit |
 | An unverified project | `PerProjectLimit` | Refused: the caller could pick another project's budget |
 | An unverified project | Only user limits | Allowed |
+| **No** user | `PerUserLimit` but no `UnattributedLimit` | Refused with `UnattributedCallError`: no limit would apply to it |
+| **No** user | `UnattributedLimit` | Allowed, against the shared limit |
 | Any ID | No `BudgetConfig` | Allowed: nothing to enforce |
 
 The error says which ID it was:
@@ -160,12 +162,12 @@ If a user can belong to several projects and chooses one per request, for exampl
 
 ## Calls with no user
 
-A call with no user ID at all (no token, or one that failed verification) isn't covered by `PerUserLimit`. That's unchanged. Either:
+A call with no user ID at all (no token, or one that failed verification) can't be held to `PerUserLimit`. If it could simply go ahead, a caller could escape their limit by leaving out their token. So when a budget sets `PerUserLimit`:
 
-- make sure your routes reject requests without a valid token before any LLM call runs, or
-- set `BudgetConfig.UnattributedLimit` to cap all calls with no user together.
+- **Without `UnattributedLimit`**, a call with no user is refused with `*otellix.UnattributedCallError`, and the provider isn't called.
+- **With `UnattributedLimit`**, it goes ahead, counted against that one limit shared by every call with no user.
 
-Otherwise, a caller who sends no token, or a bad one, isn't held to any per-user limit. See [Cost Attribution](attribution.md#calls-with-no-user).
+For anonymous or public routes, set `UnattributedLimit`. For background jobs, give them a user ID with `otellix.WithUserID`. See [Cost Attribution](attribution.md#calls-with-no-user).
 
 ---
 
@@ -221,4 +223,7 @@ The middleware is reading an unverified ID. Check its options: you need `WithUse
 The token failed verification. Check the key, that `jwt.WithValidMethods` lists the algorithm the token is signed with, and that the token hasn't expired. Issuer and audience options must match the token's claims exactly.
 
 **Calls from a background job are refused.**
-The job's context probably carries an unverified ID from the request that queued it. Set the user explicitly with `otellix.WithUserID`, which takes precedence.
+With `UnverifiedIdentityError`: the job's context probably carries an unverified ID from the request that queued it. With `UnattributedCallError`: the job has no user at all. Either way, set the user explicitly with `otellix.WithUserID`, which takes precedence.
+
+**Requests without a token fail with `UnattributedCallError`.**
+The budget sets `PerUserLimit`, and there's no user to apply it to. Reject unauthenticated requests before the LLM call, or set `UnattributedLimit` to cap them together.

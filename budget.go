@@ -37,8 +37,9 @@ type BudgetConfig struct {
 	PerProjectLimit float64
 
 	// UnattributedLimit is the maximum USD spend, shared by all calls with no
-	// user ID, within the budget window. Without it, calls with no user ID
-	// skip per-user limits entirely.
+	// user ID, within the budget window. If PerUserLimit is set and this
+	// isn't, calls with no user ID return UnattributedCallError: they'd
+	// otherwise escape every per-user limit.
 	UnattributedLimit float64
 
 	// PerUserDailyLimit is the maximum USD spend per user within the budget window.
@@ -142,11 +143,27 @@ func (e *UnverifiedIdentityError) Error() string {
 		e.Kind, e.ID, fix)
 }
 
-// unverifiedIdentityError returns an UnverifiedIdentityError if a budget
-// limit would depend on an unverified user or project ID. A user ID matters
-// to per-user limits, and to UnattributedLimit, which a call escapes by
-// having any user ID.
-func (c *Config) unverifiedIdentityError() error {
+// UnattributedCallError is returned when a budget sets PerUserLimit but not
+// UnattributedLimit, and a call has no user ID. No per-user limit could
+// apply to such a call, so without this, anything that reached the call
+// without a user, such as a request with no token, would be unlimited. The
+// provider isn't called.
+type UnattributedCallError struct{}
+
+func (e *UnattributedCallError) Error() string {
+	return "otellix: the budget limits each user, but the call has no user ID, so no limit would apply to it. " +
+		"Set the user with otellix.WithUserID or the middleware, or cap all calls with no user together with BudgetConfig.UnattributedLimit. " +
+		"See docs/attribution.md#calls-with-no-user"
+}
+
+// identityError returns an error if the call's identity would let it
+// escape a budget limit: an UnverifiedIdentityError if a limit would depend
+// on an unverified user or project ID, or an UnattributedCallError if the
+// budget limits each user but the call has none and nothing caps such calls.
+//
+// A user ID matters to per-user limits, and to UnattributedLimit, which a
+// call escapes by having any user ID.
+func (c *Config) identityError() error {
 	bc := c.BudgetConfig
 	if bc == nil {
 		return nil
@@ -156,6 +173,9 @@ func (c *Config) unverifiedIdentityError() error {
 	}
 	if c.projectUnverified && c.ProjectID != "" && bc.projectLimit() > 0 {
 		return &UnverifiedIdentityError{Kind: "project", ID: c.ProjectID}
+	}
+	if c.UserID == "" && bc.userLimit() > 0 && bc.UnattributedLimit <= 0 {
+		return &UnattributedCallError{}
 	}
 	return nil
 }

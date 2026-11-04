@@ -52,8 +52,9 @@ type identityCase struct {
 	header      string
 	wantUser    string
 	wantProject string
-	// wantRefused is the Kind of UnverifiedIdentityError a budget with
-	// per-user and per-project limits should return, or "" for none.
+	// wantRefused is why a budget with per-user and per-project limits
+	// should refuse the call: the Kind of UnverifiedIdentityError, or
+	// "unattributed" for an UnattributedCallError, or "" if it's allowed.
 	wantRefused string
 }
 
@@ -71,6 +72,7 @@ func identityCases() []identityCase {
 			name:        "no credentials leaves identity empty",
 			wantUser:    "",
 			wantProject: "",
+			wantRefused: "unattributed",
 		},
 		{
 			name:        "context keys ignore caller-supplied JWT and header",
@@ -83,10 +85,11 @@ func identityCases() []identityCase {
 			wantProject: "verified_project",
 		},
 		{
-			name:     "context key with no verified user leaves user empty",
-			opts:     []MiddlewareOption{WithUserFromContext("user_id")},
-			jwtSub:   "forged_user",
-			wantUser: "",
+			name:        "context key with no verified user leaves user empty",
+			opts:        []MiddlewareOption{WithUserFromContext("user_id")},
+			jwtSub:      "forged_user",
+			wantUser:    "",
+			wantRefused: "unattributed",
 		},
 		{
 			name:        "project header is read when opted in, unverified",
@@ -105,18 +108,20 @@ func identityCases() []identityCase {
 			wantUser: "signed_user",
 		},
 		{
-			name:     "verified JWT rejects a forged signature",
-			opts:     []MiddlewareOption{verifyWithServerKey()},
-			jwtSub:   "forged_user",
-			wantUser: "",
+			name:        "verified JWT rejects a forged signature",
+			opts:        []MiddlewareOption{verifyWithServerKey()},
+			jwtSub:      "forged_user",
+			wantUser:    "",
+			wantRefused: "unattributed",
 		},
 		{
-			name:       "verified JWT rejects an expired token",
-			opts:       []MiddlewareOption{verifyWithServerKey()},
-			jwtSub:     "expired_user",
-			jwtKey:     serverKey,
-			jwtExpired: true,
-			wantUser:   "",
+			name:        "verified JWT rejects an expired token",
+			opts:        []MiddlewareOption{verifyWithServerKey()},
+			jwtSub:      "expired_user",
+			jwtKey:      serverKey,
+			jwtExpired:  true,
+			wantUser:    "",
+			wantRefused: "unattributed",
 		},
 	}
 }
@@ -139,19 +144,23 @@ func newRequest(t *testing.T, tc identityCase) *http.Request {
 // handlerResult is what a request handler saw.
 type handlerResult struct {
 	user, project string
-	refused       string // Kind of the UnverifiedIdentityError, or ""
+	refused       string // why a budgeted call was refused, as in identityCase.wantRefused
 }
 
 // handle records the identity in ctx, and whether a budgeted call made with
-// it is refused for unverified identity.
+// it is refused for its identity.
 func handle(ctx context.Context) handlerResult {
 	res := handlerResult{user: otellix.UserFromContext(ctx), project: otellix.ProjectFromContext(ctx)}
 	mock := &providers.MockProvider{ProviderName: "openai"}
 	budget := &otellix.BudgetConfig{PerUserLimit: 1, PerProjectLimit: 1}
 	_, err := otellix.Trace(ctx, mock, providers.CallParams{Model: "gpt-4o"}, otellix.WithBudgetConfig(budget))
 	var unverified *otellix.UnverifiedIdentityError
-	if errors.As(err, &unverified) {
+	var unattributed *otellix.UnattributedCallError
+	switch {
+	case errors.As(err, &unverified):
 		res.refused = unverified.Kind
+	case errors.As(err, &unattributed):
+		res.refused = "unattributed"
 	}
 	return res
 }
@@ -162,7 +171,7 @@ func checkResult(t *testing.T, tc identityCase, got handlerResult) {
 		t.Errorf("got user=%q project=%q, want user=%q project=%q", got.user, got.project, tc.wantUser, tc.wantProject)
 	}
 	if got.refused != tc.wantRefused {
-		t.Errorf("budgeted call refused for unverified %q, want %q", got.refused, tc.wantRefused)
+		t.Errorf("budgeted call refused for %q, want %q", got.refused, tc.wantRefused)
 	}
 }
 

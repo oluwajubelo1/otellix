@@ -4,11 +4,12 @@ All notable changes to Otellix are documented here. The format follows [Keep a C
 
 ## [Unreleased]
 
-This release closes several ways around a budget. Three fixes change default behaviour, listed first: read them before upgrading.
+This release closes several ways around a budget. Four fixes change default behaviour, listed first: read them before upgrading.
 
 ### Changed (breaking)
 
 - **Budgets only apply limits to verified identity.** The HTTP middleware read the user from a JWT without checking its signature, and the project from the `X-Project-ID` header, so a caller could send a new user ID with every request to get a fresh per-user budget, or name another tenant's project to spend its budget. Otellix now tracks whether each ID was verified. If a budget limit would depend on an unverified one, the call returns `*otellix.UnverifiedIdentityError` and the provider isn't called. IDs from `WithUserFromContext`, `WithProjectFromContext`, the new `WithVerifiedJWT`, `WithUserID`/`WithProjectID` and `ContextWithUser`/`ContextWithProject` are verified. Unverified IDs still attribute calls on spans and in metrics. See [Verified Identity & Budgets](docs/verified-identity.md).
+- **Calls with no user are refused when only per-user limits apply.** A call with no user ID skipped `PerUserLimit`, so a request that left out its token, or sent one that failed verification, wasn't limited at all. If a budget sets `PerUserLimit` but not `UnattributedLimit`, such calls now return `*otellix.UnattributedCallError`. Give background jobs a user ID with `WithUserID`, or set `UnattributedLimit` to cap all calls with no user together.
 - **The middleware no longer reads `X-Project-ID` by default.** Read the project from your auth with `WithProjectFromContext`, or opt back in, unverified, with `WithProjectHeader("X-Project-ID")`.
 - **Request deduplication keeps results within a user by default.** Identical requests from different users, including across tenants, were served each other's results. The new `CacheConfig.Scope` defaults to `CacheScopeUser`; `CacheScopeProject` shares within a project, and `CacheScopeGlobal` keeps the old behaviour. See [Request Deduplication](docs/request-deduplication.md#who-shares-results-scope).
 - With the Fiber middleware, upgrade `middleware/fiber` to v0.2.0 alongside this release. Earlier Fiber versions can't mark IDs as verified, so budgets treat all their IDs as unverified.
@@ -22,6 +23,7 @@ This release closes several ways around a budget. Three fixes change default beh
 
 ### Added
 
+- `UnattributedCallError`, returned for calls with no user under a budget with per-user limits and no `UnattributedLimit`.
 - `WithVerifiedJWT(keyFunc, opts...)` middleware option, which checks the JWT's signature and expiry before reading the user.
 - `otellix.ContextWithUnverifiedUser` and `otellix.ContextWithUnverifiedProject`, for your own middleware to attribute calls from IDs callers control.
 - `llm.user_verified` and `llm.project_verified` span attributes, and `llm.usage_estimated` for calls whose usage was estimated.
