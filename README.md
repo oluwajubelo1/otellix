@@ -27,7 +27,7 @@ Most LLM observability tools tell you what you spent *after* the money is gone. 
 
 - **🧩 One-Line SDK Middleware**: Already using the official OpenAI or Anthropic Go SDK? Add `option.WithMiddleware(otellixopenai.Middleware(...))` and every call is traced, costed and budgeted. Your calls don't change.
 - **⛓️ LangChainGo Integration**: Drop-in `callbacks.Handler` for LangChainGo. Automatic token, cost, and span capture for chains.
-- **🔌 Zero-Config Attribution**: Automatically capture `user_id` and `project_id` from Gin, Echo or Fiber middleware. No more manual context plumbing.
+- **🔌 Automatic Attribution**: Capture `user_id` and `project_id` with Gin, Echo or Fiber middleware, from your auth or a verified JWT. No more manual context plumbing, and no way for callers to forge their way past a budget.
 - **🗄️ Redis Budget Store**: Distributed budget enforcement for high-availability production clusters.
 - **🚀 Go-Native & High-Performance**: Built for Go 1.22+ using native streaming and OpenTelemetry. 
 - **📊 Standard-Compliant (OTel)**: 100% OTel compliant. Works with Jaeger, Honeycomb, Prometheus, and Grafana.
@@ -81,14 +81,20 @@ own `llm.call` span if none exists, so telemetry is always captured. Set
 to enable cost tracking.
 
 ### 3. Middleware Attribution
-Stop manually passing IDs. Use our middleware to discover identity from headers/JWTs.
+Stop manually passing IDs. The middleware puts each request's user and project on the context, so every LLM call made while handling it is attributed.
 
 ```go
 import otellixmw "github.com/oluwajubelo1/otellix/middleware"
 
 r := gin.Default()
-r.Use(otellixmw.GinMiddleware()) // Automatically populates context with User/Project IDs
+r.Use(authMiddleware) // your auth: c.Set("user_id", ...), c.Set("org_id", ...)
+r.Use(otellixmw.GinMiddleware(
+    otellixmw.WithUserFromContext("user_id"),
+    otellixmw.WithProjectFromContext("org_id"),
+))
 ```
+
+Budgets only apply limits to verified identity, so a caller can't dodge a per-user limit by forging a new user ID. See [Verified Identity & Budgets](docs/verified-identity.md).
 
 ### 4. Local Development
 Two dev modes help you see traces while building:
@@ -144,6 +150,7 @@ Otellix populates your spans with industry-standard attributes:
 *   [**SDK Middleware**](docs/sdk-middleware.md) — Trace and budget existing OpenAI and Anthropic SDK clients with one option.
 *   [**Integrations**](docs/integrations.md) — LangChainGo setup.
 *   [**Middleware & Identity**](docs/middleware.md) — Gin, Echo and Fiber attribution, verified identity.
+*   [**Verified Identity & Budgets**](docs/verified-identity.md) — Why budgets only limit verified user and project IDs, and how to set them up.
 *   [**Prompt Caching**](docs/caching.md) — ROI analysis and tracking.
 *   [**Request Deduplication**](docs/request-deduplication.md) — One provider call for repeated and concurrent identical requests.
 

@@ -112,6 +112,8 @@ resp, err := client.Chat.Completions.New(ctx, params)
 
 In a web app, the [Gin, Echo or Fiber middleware](middleware.md) sets these for you. Pass the request's context to the SDK call and attribution follows.
 
+Budgets only apply limits to **verified** IDs. A user the web middleware read from an unverified JWT is attributed, but a budgeted call by them returns `otellix.UnverifiedIdentityError`, without being sent or retried. See [Verified Identity & Budgets](verified-identity.md).
+
 You can also fix a user or project for the whole client with `otellix.WithUserID(...)` or `otellix.WithProjectID(...)` in `Middleware(...)`, which suits a client used for one tenant or a background job. See [Cost Attribution](attribution.md#precedence) for how options and context combine.
 
 ---
@@ -161,7 +163,7 @@ if errors.As(stream.Err(), &budgetErr) {
 stream.Close()
 ```
 
-Always `Close()` the stream. That's when the call's cost is recorded and its reservation released.
+The call's cost is recorded, and its reservations released, when the stream ends. Call `Close()` anyway, in case you stop reading early.
 
 ### Usage in streams
 
@@ -180,6 +182,8 @@ params.StreamOptions = openai.ChatCompletionStreamOptionsParam{IncludeUsage: ope
 Without it, Otellix estimates input from the request and output from the streamed text, at about 4 characters per token. That keeps budgets working, but the cost is approximate. The extra usage chunk has an empty `Choices`, so check `len(chunk.Choices) > 0` before reading it.
 
 While a stream runs, its cost so far is estimated from the text streamed, so the mid-stream cutoff works even before the provider reports usage.
+
+A call whose cost was estimated, rather than reported by the provider, has `llm.usage_estimated = true` on its span. That includes non-streaming responses with no `usage` at all, which some OpenAI-compatible servers and proxies send: they're charged an estimate from the request and the response text, rather than nothing.
 
 ---
 
@@ -214,6 +218,12 @@ The `model` in the request has no price. Dated model names, such as `gpt-4o-2024
 
 **Streamed Chat Completions costs look slightly off.**
 They're estimated. Set `stream_options.include_usage`, as above.
+
+**Calls show `llm.usage_estimated`.**
+The provider didn't report token usage, so the cost is an estimate. For Chat Completions streams, set `stream_options.include_usage`. For an OpenAI-compatible server, check whether it can be configured to return `usage`.
+
+**Budgeted calls fail with `UnverifiedIdentityError`.**
+The user or project on the context wasn't verified. See [Verified Identity & Budgets](verified-identity.md#troubleshooting).
 
 **Calls aren't attributed to a user.**
 Pass the request's context, not `context.Background()`, to the SDK call. See [Who a call is attributed to](#who-a-call-is-attributed-to).

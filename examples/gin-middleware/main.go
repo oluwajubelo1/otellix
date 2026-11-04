@@ -26,7 +26,11 @@ func main() {
 	provider := anthropic.New()
 
 	r := gin.Default()
-	r.Use(middleware.GinMiddleware())
+	// Attribute calls to the JWT's user and the X-Project-ID header. Neither
+	// is verified, which is fine for tracing. To enforce budgets, read them
+	// from your auth middleware with WithUserFromContext and
+	// WithProjectFromContext: see docs/verified-identity.md.
+	r.Use(middleware.GinMiddleware(middleware.WithProjectHeader("X-Project-ID")))
 
 	r.GET("/ask", func(c *gin.Context) {
 		question := c.Query("q")

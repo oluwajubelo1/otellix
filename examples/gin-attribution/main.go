@@ -20,7 +20,9 @@ func main() {
 	r := gin.Default()
 
 	// 2. Attach Otellix middleware.
-	// It will extract X-Project-ID from headers and UserID from JWT Bearer tokens.
+	// It reads the user from JWT Bearer tokens and the project from the
+	// X-Tenant-ID header. Both are unverified, so they attribute calls but
+	// budgets won't apply limits to them: see docs/verified-identity.md.
 	r.Use(otellixmw.GinMiddleware(
 		otellixmw.WithProjectHeader("X-Tenant-ID"),
 	))

@@ -8,6 +8,7 @@ Related guides:
 - [Cost Attribution](attribution.md): how each call gets its user and project, and how to cap calls with no user.
 - [Budget Reservations & Cost Estimates](budget-reservations.md): how concurrent calls are kept within a limit, and how a call's cost is estimated.
 - [Unpriced Models](unpriced-models.md): making sure models with no price still count.
+- [Verified Identity & Budgets](verified-identity.md): why limits only apply to verified user and project IDs.
 
 ---
 
@@ -121,16 +122,17 @@ The window decides which spend counts and when it resets: a rolling period such 
 For `otellix.Trace`:
 
 1. Otellix works out the call's user and project from the options or context. See [Cost Attribution](attribution.md#precedence).
-2. If the model has no price and `UnpricedModel` is `UnpricedBlock`, it returns an `UnpricedModelError`. See [Unpriced Models](unpriced-models.md).
-3. It estimates the call's cost from the length of the prompt and the expected output (500 tokens by default, capped at `MaxTokens`). See [Cost estimates](budget-reservations.md#how-the-estimate-is-worked-out).
-4. It checks each limit that applies:
+2. If a limit would depend on a user or project ID that wasn't verified, such as one from an unverified JWT or a header, it returns an `UnverifiedIdentityError`. See [Verified Identity & Budgets](verified-identity.md).
+3. If the model has no price and `UnpricedModel` is `UnpricedBlock`, it returns an `UnpricedModelError`. See [Unpriced Models](unpriced-models.md).
+4. It estimates the call's cost from the length of the prompt and the expected output (500 tokens by default, capped at `MaxTokens`). See [Cost estimates](budget-reservations.md#how-the-estimate-is-worked-out).
+5. It checks each limit that applies:
    - the user's `PerUserLimit`, or `UnattributedLimit` if there's no user;
    - the project's `PerProjectLimit`, if there's a project.
 
    A limit is exceeded if *current spend + estimate > limit*. Current spend includes calls still in flight.
-5. If every limit has room, it **reserves** the estimate against them in the same atomic step, so calls made at the same time can't all slip through. See [Budget Reservations](budget-reservations.md).
-6. If any limit is exceeded, the `FallbackAction` runs.
-7. If the call goes ahead, its **actual** cost is recorded against the user (or the unattributed budget) and the project, and the reservation is released.
+6. If every limit has room, it **reserves** the estimate against them in the same atomic step, so calls made at the same time can't all slip through. See [Budget Reservations](budget-reservations.md).
+7. If any limit is exceeded, the `FallbackAction` runs.
+8. If the call goes ahead, its **actual** cost is recorded against the user (or the unattributed budget) and the project, and the reservation is released.
 
 For `otellix.TraceStream`, see [Streaming](#real-time-streaming-cutoff) below.
 

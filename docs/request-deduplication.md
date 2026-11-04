@@ -2,7 +2,7 @@
 
 LLM apps often send the same request more than once: a user double-clicks "Generate", a page re-renders, a retry fires, or many users ask the same FAQ-style question. Each of those is a full-price provider call.
 
-Request deduplication makes identical requests cost one call:
+Request deduplication makes identical requests from the same user cost one call, or, if you choose, identical requests from anyone in a project or across your whole app:
 
 1. **Caching:** once a request has completed, identical requests within the TTL get the stored result instantly, with no provider call.
 2. **Collapsing:** if identical requests arrive *while the first is still in flight*, they wait for it and share its result instead of each calling the provider.
@@ -29,22 +29,45 @@ Create the `CacheConfig` **once**, e.g. at startup, and reuse it for every call.
 
 ## What counts as "identical"
 
-Two requests are identical when all of these match:
+Two requests are identical when everything that shapes the response matches:
 
 | Included in the key | Not included |
 | --- | --- |
-| Provider name | `Temperature` |
-| Model | User ID, project ID, feature ID |
-| `SystemPrompt` | Any other `CallParams` field |
-| `Messages` (role and content, in order) | Options such as `WithAttributes` |
-| `MaxTokens` | |
+| Provider name and model | Feature ID |
+| `SystemPrompt` | Options such as `WithAttributes` |
+| `Messages` (role and content, in order) | |
+| `MaxTokens` and `Temperature` | |
+| `Extra`: provider-specific parameters, such as tools or a response format | |
+| The user and project, depending on the [scope](#who-shares-results-scope) | |
 
-The key is a SHA-256 hash of those fields, so prompts are never stored as cache keys in readable form.
+The fields are encoded and hashed with SHA-256, so prompts are never stored as cache keys in readable form.
 
-Two consequences:
+> **Changed in v1.8.0:** `Temperature` and `Extra` used to be left out, so a request with tools or a JSON response format could be served the cached result of one without. They're part of the key now.
 
-- **Temperature is ignored.** A request at temperature 0.9 can get a cached answer that was generated at 0.2. If you rely on varied outputs, such as "give me another idea", don't use deduplication for those calls, or make the request differ, e.g. by including a seed in the prompt.
-- **Users share answers.** Two users who send exactly the same messages get the same answer. That's the point for FAQ-style traffic, but don't enable deduplication for calls whose answers must be personal unless the personal context is in the messages, which then makes the requests differ.
+Requests at the same temperature still share a result: deduplication returns the same answer, not a fresh sample. If you rely on varied outputs, such as "give me another idea", don't use deduplication for those calls, or make the requests differ, for example by including a seed in the prompt.
+
+---
+
+## Who shares results (`Scope`)
+
+`CacheConfig.Scope` decides who can be served a cached or in-flight result:
+
+| Scope | Shared between | Use it for |
+| --- | --- | --- |
+| `CacheScopeUser` (default) | Requests from the **same user in the same project** | Double-clicks, re-renders and retries: the same person repeating themselves |
+| `CacheScopeProject` | All users in the **same project** | Answers that are the same for everyone in a team or tenant, e.g. questions about that tenant's shared documents |
+| `CacheScopeGlobal` | **Everyone** | FAQ-style answers with nothing personal or tenant-specific in them |
+
+```go
+faq := &otellix.CacheConfig{
+    TTL:   24 * time.Hour,
+    Scope: otellix.CacheScopeGlobal, // the same answer is fine for everyone
+}
+```
+
+Calls with no user ID count as one user, so under `CacheScopeUser` they share results with each other.
+
+> **Changed in v1.8.0:** results used to be shared between everyone, as `CacheScopeGlobal` does now. One user could be served an answer generated for another, including in another tenant. Set `Scope: otellix.CacheScopeGlobal` to keep the old behaviour for calls where that's safe.
 
 ---
 
@@ -54,6 +77,7 @@ Two consequences:
 type CacheConfig struct {
     TTL   time.Duration // how long a completed result is reused
     Store CacheStore    // where results are kept; nil = in-memory
+    Scope CacheScope    // who can be served a result; default: the same user
 }
 ```
 
@@ -61,6 +85,7 @@ type CacheConfig struct {
 | --- | --- | --- |
 | `TTL` | none: set it | How long a completed result is served from the cache. Pick it by how stale an answer may be: minutes for live data, hours or days for static content. |
 | `Store` | in-memory, created on first use | Any `CacheStore`. See [Custom stores](#custom-stores). |
+| `Scope` | `CacheScopeUser` | Who can be served a result. See [Who shares results](#who-shares-results-scope). |
 
 ### The in-memory store
 
@@ -195,7 +220,8 @@ Deduplication applies to `otellix.Trace` only. `otellix.TraceStream` always call
 
 **Identical requests still call the provider every time.**
 - Check that the `CacheConfig` is created once and reused, not built per request.
-- Check that the requests really are identical: the same model, system prompt, messages and `MaxTokens`. A timestamp or request ID inside the prompt makes every request unique.
+- Check that the requests really are identical: the same model, system prompt, messages, `MaxTokens`, `Temperature` and `Extra`. A timestamp or request ID inside the prompt makes every request unique.
+- Check the requests come from the same user, or set a wider [`Scope`](#who-shares-results-scope).
 - Check the TTL isn't too short.
 - Check you're using `Trace`, not `TraceStream`.
 
@@ -203,7 +229,10 @@ Deduplication applies to `otellix.Trace` only. `otellix.TraceStream` always call
 That happened in versions before this fix when `CacheConfig.Store` was nil. Upgrade, or set `Store: otellix.NewInMemoryCacheStore()` explicitly.
 
 **Users got an answer that was meant for someone else.**
-The requests were identical, so they shared a result. Put the user-specific context in the messages, or don't enable deduplication for those calls.
+The cache's `Scope` is `CacheScopeProject` or `CacheScopeGlobal`, so identical requests from different users shared a result. Use the default, `CacheScopeUser`, for answers that can be personal.
+
+**Fewer cache hits after upgrading to v1.8.0.**
+Results are now kept within each user by default. If the answers really are the same for everyone, set `Scope: otellix.CacheScopeProject` or `otellix.CacheScopeGlobal`.
 
 **Cost metrics dropped after enabling deduplication.**
 That's expected: metrics count only real provider calls, which is what you're billed for.
