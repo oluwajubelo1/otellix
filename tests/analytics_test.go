@@ -331,3 +331,30 @@ func TestGetOptimizationEmptyRecords(t *testing.T) {
 		t.Errorf("empty records should have no suggestions, got %d", len(report.Suggestions))
 	}
 }
+
+// TestStreamsAreRecordedForAnalytics checks that streamed spend appears in
+// GetBreakdown and GetForecast, as it does in budgets.
+func TestStreamsAreRecordedForAnalytics(t *testing.T) {
+	otellix.ResetCallRecords()
+	t.Cleanup(func() { otellix.ResetCallRecords() })
+
+	mock := &providers.MockProvider{ProviderName: "openai", Result: providers.CallResult{InputTokens: 100, OutputTokens: 50}}
+	stream, err := otellix.TraceStream(context.Background(), mock, providers.CallParams{Model: "gpt-4o"},
+		otellix.WithFeatureID("streamed-chat"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := stream.Recv(); err != nil {
+			break
+		}
+	}
+
+	breakdown := otellix.GetBreakdown(otellix.ByFeature)
+	if len(breakdown) != 1 || breakdown[0].Key != "streamed-chat" || breakdown[0].CallCount != 1 {
+		t.Fatalf("expected the stream in the breakdown, got %+v", breakdown)
+	}
+	if spend := otellix.GetForecast("").CurrentMonthSpend; spend <= 0 || spend != breakdown[0].TotalCostUSD {
+		t.Errorf("expected the stream's $%.6f in the forecast, got $%.6f", breakdown[0].TotalCostUSD, spend)
+	}
+}
