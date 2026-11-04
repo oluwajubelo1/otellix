@@ -142,7 +142,7 @@ func Trace(ctx context.Context, provider providers.Provider, params providers.Ca
 	// Hook 1: Dedup — return a cached result if there is one, and collapse
 	// identical requests already in flight into a single provider call.
 	if cfg.CacheConfig != nil {
-		cacheKey := makeCacheKey(cfg.Provider, cfg.Model, params)
+		cacheKey := makeCacheKey(cfg, params)
 		if cached, ok := cfg.CacheConfig.store().Get(ctx, cacheKey); ok {
 			return cached, nil
 		}
