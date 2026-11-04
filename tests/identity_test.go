@@ -86,3 +86,56 @@ func TestUnverifiedIdentityIsStillAttributed(t *testing.T) {
 		t.Errorf("expected llm.user_verified=false, got %q", got)
 	}
 }
+
+// TestUnattributedCallsNeedAnUnattributedLimit checks that a budget that
+// limits each user refuses calls with no user, unless UnattributedLimit
+// caps them: otherwise anything that reached the call without a user, such
+// as a request with no token, would escape every per-user limit.
+func TestUnattributedCallsNeedAnUnattributedLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		opts        []otellix.Option
+		budget      otellix.BudgetConfig
+		wantRefused bool
+	}{
+		{"per-user limit and no unattributed limit", nil,
+			otellix.BudgetConfig{PerUserLimit: 1}, true},
+		{"the deprecated per-user field counts too", nil,
+			otellix.BudgetConfig{PerUserDailyLimit: 1}, true}, //nolint:staticcheck // testing the deprecated field
+		{"an unattributed limit caps calls with no user", nil,
+			otellix.BudgetConfig{PerUserLimit: 1, UnattributedLimit: 5}, false},
+		{"no per-user limit: the user doesn't matter", []otellix.Option{otellix.WithProjectID("acme")},
+			otellix.BudgetConfig{PerProjectLimit: 1}, false},
+		{"a call with a user", []otellix.Option{otellix.WithUserID("ada")},
+			otellix.BudgetConfig{PerUserLimit: 1}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &providers.MockProvider{ProviderName: "openai"}
+			budget := tc.budget
+			opts := append([]otellix.Option{otellix.WithBudgetConfig(&budget)}, tc.opts...)
+			_, err := otellix.Trace(context.Background(), mock, providers.CallParams{Model: "gpt-4o"}, opts...)
+
+			var unattributed *otellix.UnattributedCallError
+			refused := errors.As(err, &unattributed)
+			if refused != tc.wantRefused {
+				t.Fatalf("refused=%v, want %v (err: %v)", refused, tc.wantRefused, err)
+			}
+			if !refused && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if refused && mock.CallCount != 0 {
+				t.Errorf("a refused call should not reach the provider")
+			}
+		})
+	}
+
+	t.Run("streams too", func(t *testing.T) {
+		mock := &providers.MockProvider{ProviderName: "openai"}
+		_, err := otellix.TraceStream(context.Background(), mock, providers.CallParams{Model: "gpt-4o"},
+			otellix.WithBudgetConfig(&otellix.BudgetConfig{PerUserLimit: 1}))
+		var unattributed *otellix.UnattributedCallError
+		if !errors.As(err, &unattributed) || mock.CallCount != 0 {
+			t.Fatalf("expected the stream to be refused before it started, got err=%v calls=%d", err, mock.CallCount)
+		}
+	})
+}

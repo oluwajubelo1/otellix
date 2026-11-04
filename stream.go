@@ -65,7 +65,7 @@ func TraceStream(ctx context.Context, provider providers.Provider, params provid
 	var covered float64
 	if cfg.BudgetConfig != nil {
 		enforcer = NewBudgetEnforcer(cfg.BudgetConfig)
-		if err := cfg.unverifiedIdentityError(); err != nil {
+		if err := cfg.identityError(); err != nil {
 			return nil, err
 		}
 		if err := cfg.unpricedError(); err != nil {
