@@ -3,7 +3,6 @@ package otellix
 import (
 	"context"
 	"fmt"
-	"math"
 	"slices"
 	"strconv"
 	"sync"
@@ -436,24 +435,13 @@ func (e *BudgetEnforcer) Check(ctx context.Context, userID, projectID string, es
 	return true, e.config.FallbackAction
 }
 
-// headroom returns how much more can be spent before the tightest limit
-// that applies is exceeded, or +Inf if no limit applies.
-func (e *BudgetEnforcer) headroom(ctx context.Context, userID, projectID string) float64 {
-	headroom := math.Inf(1)
-	for _, l := range e.limits(userID, projectID) {
-		headroom = min(headroom, l.Limit-e.store.GetSpend(ctx, l.Key))
-	}
-	return headroom
-}
-
 // Reservation is spend held against a call's budgets while the call runs,
 // so calls made at the same time can't all pass the budget check at once.
 type Reservation struct {
-	store  BudgetReserver
-	id     string
-	keys   []string
-	amount float64
-	once   sync.Once
+	store BudgetReserver
+	id    string
+	keys  []string
+	once  sync.Once
 }
 
 // Release drops the hold. It is safe to call more than once, and on a nil
@@ -467,14 +455,6 @@ func (r *Reservation) Release(ctx context.Context) {
 		// the budget until it falls out of the window.
 		r.store.Release(context.WithoutCancel(ctx), r.id, r.keys)
 	})
-}
-
-// held returns the amount held, or 0 for a nil Reservation.
-func (r *Reservation) held() float64 {
-	if r == nil {
-		return 0
-	}
-	return r.amount
 }
 
 // Reserve checks whether estimatedCost fits within every budget that applies
@@ -510,7 +490,7 @@ func (e *BudgetEnforcer) Reserve(ctx context.Context, userID, projectID string, 
 	for i, l := range limits {
 		keys[i] = l.Key
 	}
-	return &Reservation{store: reserver, id: id, keys: keys, amount: estimatedCost}, true
+	return &Reservation{store: reserver, id: id, keys: keys}, true
 }
 
 // Record adds actual cost to the budget store after a successful call.
